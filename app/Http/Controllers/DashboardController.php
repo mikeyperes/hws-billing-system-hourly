@@ -4,20 +4,27 @@ namespace App\Http\Controllers;
 
 use App\Models\Client;
 use App\Models\Employee;
-use App\Models\Invoice;
 use App\Models\ScanLog;
-use App\Models\WhmServer;
-use App\Models\HostingAccount;
-use App\Models\HostingSubscription;
+use App\Services\GenericService;
 use Illuminate\Http\Request;
 
 /**
  * DashboardController — renders the main overview dashboard.
- * Shows: employee overview, invoice summary, flagged clients,
- * recent scan logs, and system health information.
+ * Shows: invoice summary, cloud services stats, employee overview,
+ * flagged clients, recent scans, and system health.
+ *
+ * All stats queries come from GenericService shared methods
+ * so Dashboard and module pages always use the same logic.
  */
 class DashboardController extends Controller
 {
+    protected GenericService $generic;
+
+    public function __construct(GenericService $generic)
+    {
+        $this->generic = $generic;
+    }
+
     /**
      * Display the main dashboard page.
      *
@@ -25,60 +32,36 @@ class DashboardController extends Controller
      */
     public function index()
     {
-        // Get all active employees with their sheet IDs and scan status
+        // Active employees
         $employees = Employee::active()->orderBy('name')->get();
 
-        // Get invoice counts by status for the summary cards
-        $invoiceCounts = [
-            // Count of draft invoices
-            'draft' => Invoice::where('status', config('hws.invoice_statuses.draft'))->count(),
-            // Count of sent/open invoices
-            'sent'  => Invoice::where('status', config('hws.invoice_statuses.sent'))->count(),
-            // Count of paid invoices
-            'paid'  => Invoice::where('status', config('hws.invoice_statuses.paid'))->count(),
-        ];
+        // Invoice stats — shared method used here and anywhere else that needs invoice summaries
+        $invoiceStats = $this->generic->getInvoiceStats();
 
-        // Get total amounts by status for the summary cards
-        $invoiceAmounts = [
-            // Sum of draft invoice amounts
-            'draft' => Invoice::where('status', config('hws.invoice_statuses.draft'))->sum('total_amount'),
-            // Sum of sent invoice amounts (outstanding)
-            'sent'  => Invoice::where('status', config('hws.invoice_statuses.sent'))->sum('total_amount'),
-            // Sum of paid invoice amounts (collected)
-            'paid'  => Invoice::where('status', config('hws.invoice_statuses.paid'))->sum('total_amount'),
-        ];
+        // Cloud stats — shared method used here and in HostingController
+        $cloudStats = $this->generic->getCloudStats();
 
-        // Get clients with low credit balance that need attention
+        // Low credit clients
         $lowCreditClients = Client::lowCredit()->active()->get();
 
-        // Get the 10 most recent scan log entries for the activity feed
+        // Recent scan activity (last 10)
         $recentScans = ScanLog::with('employee')
             ->orderByDesc('created_at')
             ->limit(10)
             ->get();
 
-        // Build system health information
+        // System health
         $systemHealth = [
-            'last_scan' => ScanLog::max('completed_at') ?? 'Never',
-            'php_version' => phpversion(),
+            'last_scan'        => ScanLog::max('completed_at') ?? 'Never',
+            'php_version'      => phpversion(),
             'active_employees' => $employees->count(),
-            'active_clients' => Client::active()->count(),
+            'active_clients'   => Client::active()->count(),
         ];
 
-        // ── Cloud Services summary ──
-        $cloudStats = [
-            'servers'             => WhmServer::count(),
-            'total_accounts'      => HostingAccount::count(),
-            'active_accounts'     => HostingAccount::where('status', 'active')->count(),
-            'active_subscriptions' => HostingSubscription::where('status', 'active')->count(),
-            'monthly_revenue'     => HostingSubscription::where('status', 'active')->where('interval', 'month')->sum('amount_cents'),
-        ];
-
-        // Render the dashboard view with all data
         return view('dashboard.index', [
             'employees'        => $employees,
-            'invoiceCounts'    => $invoiceCounts,
-            'invoiceAmounts'   => $invoiceAmounts,
+            'invoiceCounts'    => $invoiceStats['counts'],
+            'invoiceAmounts'   => $invoiceStats['amounts'],
             'lowCreditClients' => $lowCreditClients,
             'recentScans'      => $recentScans,
             'systemHealth'     => $systemHealth,

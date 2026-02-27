@@ -49,56 +49,35 @@ class InfoController extends Controller
 
     /**
      * Collect git repository information.
-     * Runs git commands via shell_exec and parses the output.
+     * Uses GenericService::runCommand() for all shell operations.
      *
      * @return array Git details (branch, commit, remote, status, log)
      */
     private function getGitInfo(): array
     {
-        // Base path of the Laravel project
         $basePath = base_path();
+        $generic = app(\App\Services\GenericService::class);
 
-        // Check if .git directory exists
         if (!is_dir($basePath . '/.git')) {
             return ['error' => 'Not a git repository — .git directory not found.'];
         }
 
+        // All git commands use -c safe.directory to avoid dubious ownership errors
+        $git = "git -C {$basePath} -c safe.directory={$basePath}";
+
         return [
-            // Current branch name
-            'branch' => trim(shell_exec("cd {$basePath} && git rev-parse --abbrev-ref HEAD 2>&1") ?? ''),
-
-            // Latest commit hash (short)
-            'commit_short' => trim(shell_exec("cd {$basePath} && git rev-parse --short HEAD 2>&1") ?? ''),
-
-            // Latest commit hash (full)
-            'commit_full' => trim(shell_exec("cd {$basePath} && git rev-parse HEAD 2>&1") ?? ''),
-
-            // Latest commit message
-            'commit_message' => trim(shell_exec("cd {$basePath} && git log -1 --pretty=%B 2>&1") ?? ''),
-
-            // Latest commit date
-            'commit_date' => trim(shell_exec("cd {$basePath} && git log -1 --pretty=%ci 2>&1") ?? ''),
-
-            // Latest commit author
-            'commit_author' => trim(shell_exec("cd {$basePath} && git log -1 --pretty=%an 2>&1") ?? ''),
-
-            // Remote URL (origin)
-            'remote_url' => trim(shell_exec("cd {$basePath} && git remote get-url origin 2>&1") ?? ''),
-
-            // Total commit count
-            'commit_count' => trim(shell_exec("cd {$basePath} && git rev-list --count HEAD 2>&1") ?? ''),
-
-            // Working tree status (clean or modified files)
-            'status' => trim(shell_exec("cd {$basePath} && git status --short 2>&1") ?? ''),
-
-            // Last 10 commits (one-line format)
-            'recent_commits' => trim(shell_exec("cd {$basePath} && git log --oneline -10 2>&1") ?? ''),
-
-            // Tags
-            'tags' => trim(shell_exec("cd {$basePath} && git tag --sort=-v:refname 2>&1") ?? ''),
-
-            // Last fetch time
-            'last_fetch' => is_file($basePath . '/.git/FETCH_HEAD')
+            'branch'         => $generic->runCommand("{$git} rev-parse --abbrev-ref HEAD"),
+            'commit_short'   => $generic->runCommand("{$git} rev-parse --short HEAD"),
+            'commit_full'    => $generic->runCommand("{$git} rev-parse HEAD"),
+            'commit_message' => $generic->runCommand("{$git} log -1 --pretty=%B"),
+            'commit_date'    => $generic->runCommand("{$git} log -1 --pretty=%ci"),
+            'commit_author'  => $generic->runCommand("{$git} log -1 --pretty=%an"),
+            'remote_url'     => $generic->runCommand("{$git} remote get-url origin"),
+            'commit_count'   => $generic->runCommand("{$git} rev-list --count HEAD"),
+            'status'         => $generic->runCommand("{$git} status --short"),
+            'recent_commits' => $generic->runCommand("{$git} log --oneline -10"),
+            'tags'           => $generic->runCommand("{$git} tag --sort=-v:refname"),
+            'last_fetch'     => is_file($basePath . '/.git/FETCH_HEAD')
                 ? date('Y-m-d H:i:s', filemtime($basePath . '/.git/FETCH_HEAD'))
                 : 'Never',
         ];
@@ -116,7 +95,7 @@ class InfoController extends Controller
                 [
                     'name'    => 'Quick Update (alias)',
                     'command' => 'update-hws-billing',
-                    'desc'    => 'Fetches latest from origin and force-resets to origin/main. Set up as bash alias.',
+                    'desc'    => 'Pulls latest code, runs migrations, clears all caches. One command does everything.',
                 ],
                 [
                     'name'    => 'Pull Latest',

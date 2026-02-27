@@ -6,39 +6,69 @@ use App\Models\WhmServer;
 use App\Models\HostingAccount;
 use App\Models\HostingSubscription;
 use App\Models\Client;
+use App\Services\GenericService;
 use Illuminate\Http\Request;
 
 /**
  * HostingController — manages Hexa Cloud Services module.
  * Handles WHM servers, hosting accounts, and their Stripe subscriptions.
- * Foundation for tracking hosting infrastructure across multiple servers.
  */
 class HostingController extends Controller
 {
+    protected GenericService $generic;
+
+    public function __construct(GenericService $generic)
+    {
+        $this->generic = $generic;
+    }
+
+    /**
+     * Validation rules for WHM server forms.
+     * Single source of truth — used by both store and update.
+     *
+     * @param bool $isUpdate Whether this is an update (adds is_active rule)
+     * @return array Laravel validation rules
+     */
+    private function serverRules(bool $isUpdate = false): array
+    {
+        $rules = [
+            'name'        => 'required|string|max:255',
+            'hostname'    => 'required|string|max:255',
+            'port'        => 'integer|min:1|max:65535',
+            'auth_type'   => 'required|in:root_password,api_token,access_hash',
+            'username'    => 'required|string|max:255',
+            'credentials' => 'nullable|string',
+            'notes'       => 'nullable|string',
+        ];
+
+        if ($isUpdate) {
+            $rules['is_active'] = 'boolean';
+        }
+
+        return $rules;
+    }
+
+    // ─────────────────────────────────────────
+    // OVERVIEW
+    // ─────────────────────────────────────────
+
     /**
      * Cloud Services dashboard — overview of all servers and accounts.
+     * Uses GenericService::getCloudStats() — same data as the main dashboard.
      *
      * @return \Illuminate\View\View
      */
     public function index()
     {
-        // Get server summary stats
         $servers = WhmServer::withCount('hostingAccounts')->orderBy('name')->get();
-
-        // Get total counts
-        $totalAccounts = HostingAccount::count();
-        $activeAccounts = HostingAccount::where('status', 'active')->count();
-        $totalSubscriptions = HostingSubscription::where('status', 'active')->count();
-        $monthlyRevenue = HostingSubscription::where('status', 'active')
-            ->where('interval', 'month')
-            ->sum('amount_cents');
+        $cloudStats = $this->generic->getCloudStats();
 
         return view('hosting.index', [
             'servers'            => $servers,
-            'totalAccounts'      => $totalAccounts,
-            'activeAccounts'     => $activeAccounts,
-            'totalSubscriptions' => $totalSubscriptions,
-            'monthlyRevenue'     => $monthlyRevenue,
+            'totalAccounts'      => $cloudStats['total_accounts'],
+            'activeAccounts'     => $cloudStats['active_accounts'],
+            'totalSubscriptions' => $cloudStats['active_subscriptions'],
+            'monthlyRevenue'     => $cloudStats['monthly_revenue'],
         ]);
     }
 
@@ -78,18 +108,7 @@ class HostingController extends Controller
      */
     public function storeServer(Request $request)
     {
-        // Validate the incoming form data
-        $validated = $request->validate([
-            'name'        => 'required|string|max:255',
-            'hostname'    => 'required|string|max:255',
-            'port'        => 'integer|min:1|max:65535',
-            'auth_type'   => 'required|in:root_password,api_token,access_hash',
-            'username'    => 'required|string|max:255',
-            'credentials' => 'nullable|string',
-            'notes'       => 'nullable|string',
-        ]);
-
-        // Create the server record
+        $validated = $request->validate($this->serverRules());
         $server = WhmServer::create($validated);
 
         return redirect()
@@ -119,16 +138,7 @@ class HostingController extends Controller
      */
     public function updateServer(Request $request, WhmServer $server)
     {
-        $validated = $request->validate([
-            'name'        => 'required|string|max:255',
-            'hostname'    => 'required|string|max:255',
-            'port'        => 'integer|min:1|max:65535',
-            'auth_type'   => 'required|in:root_password,api_token,access_hash',
-            'username'    => 'required|string|max:255',
-            'credentials' => 'nullable|string',
-            'is_active'   => 'boolean',
-            'notes'       => 'nullable|string',
-        ]);
+        $validated = $request->validate($this->serverRules(isUpdate: true));
 
         // Only update credentials if a new value was provided
         if (empty($validated['credentials'])) {
@@ -136,7 +146,6 @@ class HostingController extends Controller
         }
 
         $validated['is_active'] = $request->has('is_active');
-
         $server->update($validated);
 
         return redirect()
@@ -158,12 +167,10 @@ class HostingController extends Controller
     {
         $query = HostingAccount::with(['whmServer', 'client', 'activeSubscriptions']);
 
-        // Optional server filter
+        // Optional filters
         if ($request->filled('server')) {
             $query->where('whm_server_id', $request->server);
         }
-
-        // Optional status filter
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
@@ -236,7 +243,6 @@ class HostingController extends Controller
         ]);
 
         $validated['hosting_account_id'] = $account->id;
-
         HostingSubscription::create($validated);
 
         return redirect()

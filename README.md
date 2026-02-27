@@ -656,15 +656,24 @@ Navigate to `https://billing.hexawebsystems.com/login`
 
 ### Updating the Code
 
-To pull the latest changes from the repo:
+One command does everything — pulls code, runs migrations, clears caches:
+
+```bash
+update-hws-billing
+```
+
+This alias calls `deploy.sh` in the project root. To set it up:
+
+```bash
+echo "alias update-hws-billing='/home/hexawebsystems/public_html/billing.hexawebsystems.com/deploy.sh'" >> ~/.bashrc
+source ~/.bashrc
+```
+
+Or run the script directly:
 
 ```bash
 cd /home/hexawebsystems/public_html/billing.hexawebsystems.com
-git pull origin main
-php artisan migrate --force
-php artisan config:clear
-php artisan cache:clear
-php artisan view:clear
+./deploy.sh
 ```
 
 ### Troubleshooting Quick Reference

@@ -13,6 +13,62 @@ use Illuminate\Support\Facades\Log;
 class GenericService
 {
     /**
+     * Run a shell command and return trimmed output.
+     * Centralizes the trim(shell_exec()) pattern used across the system.
+     *
+     * @param string $command Shell command to execute
+     * @return string Trimmed output (empty string on failure)
+     */
+    public function runCommand(string $command): string
+    {
+        return trim(shell_exec($command . ' 2>&1') ?? '');
+    }
+
+    /**
+     * Get invoice summary stats (counts and amounts by status).
+     * Used by Dashboard and any future module that needs invoice summaries.
+     *
+     * @return array{counts: array, amounts: array} Invoice stats grouped by status
+     */
+    public function getInvoiceStats(): array
+    {
+        $statuses = [
+            'draft' => config('hws.invoice_statuses.draft'),
+            'sent'  => config('hws.invoice_statuses.sent'),
+            'paid'  => config('hws.invoice_statuses.paid'),
+        ];
+
+        $counts = [];
+        $amounts = [];
+
+        foreach ($statuses as $key => $status) {
+            $query = \App\Models\Invoice::where('status', $status);
+            $counts[$key] = (clone $query)->count();
+            $amounts[$key] = (clone $query)->sum('total_amount');
+        }
+
+        return ['counts' => $counts, 'amounts' => $amounts];
+    }
+
+    /**
+     * Get cloud services summary stats.
+     * Used by Dashboard and HostingController overview.
+     *
+     * @return array Cloud stats (servers, accounts, subscriptions, revenue)
+     */
+    public function getCloudStats(): array
+    {
+        return [
+            'servers'              => \App\Models\WhmServer::count(),
+            'total_accounts'       => \App\Models\HostingAccount::count(),
+            'active_accounts'      => \App\Models\HostingAccount::where('status', 'active')->count(),
+            'active_subscriptions' => \App\Models\HostingSubscription::where('status', 'active')->count(),
+            'monthly_revenue'      => \App\Models\HostingSubscription::where('status', 'active')
+                ->where('interval', 'month')
+                ->sum('amount_cents'),
+        ];
+    }
+    /**
      * Format a number of minutes into a human-readable hours string.
      * Example: 150 minutes → "2.50 hrs"
      *

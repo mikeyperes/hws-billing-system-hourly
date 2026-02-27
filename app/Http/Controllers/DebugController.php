@@ -27,8 +27,21 @@ class DebugController extends Controller
      */
     public function __construct(GenericService $generic)
     {
-        // Store service reference
         $this->generic = $generic;
+    }
+
+    /**
+     * Guard — redirect to dashboard if debug mode is off.
+     * Single check used by every method instead of repeating the if-block.
+     *
+     * @return \Illuminate\Http\RedirectResponse|null Redirect if blocked, null if allowed
+     */
+    private function guardDebugMode()
+    {
+        if (!config('hws.debug_mode')) {
+            return redirect()->route('dashboard')->with('error', 'Debug mode is disabled.');
+        }
+        return null;
     }
 
     /**
@@ -39,10 +52,7 @@ class DebugController extends Controller
      */
     public function index()
     {
-        // Block access if debug mode is off
-        if (!config('hws.debug_mode')) {
-            return redirect()->route('dashboard')->with('error', 'Debug mode is disabled.');
-        }
+        if ($blocked = $this->guardDebugMode()) return $blocked;
 
         // Define available debug modules
         $modules = [
@@ -92,10 +102,7 @@ class DebugController extends Controller
      */
     public function google(Request $request, GoogleSheetsService $sheetsService)
     {
-        // Block access if debug mode is off
-        if (!config('hws.debug_mode')) {
-            return redirect()->route('dashboard')->with('error', 'Debug mode is disabled.');
-        }
+        if ($blocked = $this->guardDebugMode()) return $blocked;
 
         $results = [];
 
@@ -145,10 +152,7 @@ class DebugController extends Controller
      */
     public function stripe(Request $request, StripeService $stripeService)
     {
-        // Block access if debug mode is off
-        if (!config('hws.debug_mode')) {
-            return redirect()->route('dashboard')->with('error', 'Debug mode is disabled.');
-        }
+        if ($blocked = $this->guardDebugMode()) return $blocked;
 
         $results = [];
 
@@ -189,10 +193,7 @@ class DebugController extends Controller
      */
     public function email(Request $request, EmailService $emailService)
     {
-        // Block access if debug mode is off
-        if (!config('hws.debug_mode')) {
-            return redirect()->route('dashboard')->with('error', 'Debug mode is disabled.');
-        }
+        if ($blocked = $this->guardDebugMode()) return $blocked;
 
         $results = [];
 
@@ -244,10 +245,7 @@ class DebugController extends Controller
      */
     public function database(Request $request)
     {
-        // Block access if debug mode is off
-        if (!config('hws.debug_mode')) {
-            return redirect()->route('dashboard')->with('error', 'Debug mode is disabled.');
-        }
+        if ($blocked = $this->guardDebugMode()) return $blocked;
 
         $results = [];
         $tables = [];
