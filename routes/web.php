@@ -69,6 +69,8 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/employees/{employee}/edit', [EmployeeController::class, 'edit'])->name('employees.edit');
     // Update a specific employee
     Route::put('/employees/{employee}', [EmployeeController::class, 'update'])->name('employees.update');
+    // Validate employee's Google Sheet access
+    Route::post('/employees/{employee}/validate', [EmployeeController::class, 'validateSheet'])->name('employees.validate');
 
     // ── Billing Scan ──
     // Show the scan page

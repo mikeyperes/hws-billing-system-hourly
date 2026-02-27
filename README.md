@@ -3,7 +3,7 @@
 Internal billing platform for managing hourly client work across multiple employees. Scans employee Google Sheets for billable time entries, generates Stripe draft invoices, tracks payment status, and updates sheet rows when marked as billed.
 
 **Stack:** PHP 8.2+ / Laravel 11 / MySQL / Blade + Tailwind CSS + Alpine.js  
-**Domain:** `hourly.hexawebsystems.com`  
+**Domain:** `billing.hexawebsystems.com`  
 **Server:** WHM/cPanel VPS with EasyApache4  
 **Repo:** `hws-hourly-bill-tracking-system`
 
@@ -477,68 +477,227 @@ Shortcodes work in **all** template fields: from name, from email, reply-to, CC,
 
 ## Installation Guide
 
-### Server Prerequisites
+### Step 1 — Server Prerequisites (WHM/cPanel)
 
-**PHP 8.2+ Extensions** (enable in EasyApache4):
+**PHP Extensions** — enable in EasyApache4 (WHM → Software → EasyApache4):
 
-`bcmath` `ctype` `curl` `dom` `fileinfo` `json` `mbstring` `openssl` `pdo` `pdo_mysql` `tokenizer` `xml` `zip`
+`bcmath` `ctype` `curl` `dom` `fileinfo` `json` `mbstring` `mysqlnd` `openssl` `pdo` `pdo_mysql` `tokenizer` `xml` `zip`
 
-**Install Composer** (if not present):
+**Critical:** `mysqlnd` (MySQL Native Driver) must be installed for PHP to talk to MySQL. If missing:
 
 ```bash
-curl -sS https://getcomposer.org/installer | php
-mv composer.phar /usr/local/bin/composer
+# Check your PHP version first
+php -v
+
+# Install MySQL driver for your PHP version (adjust ea-php84 to match)
+yum install ea-php84-php-mysqlnd
+systemctl restart httpd
 ```
 
-### Step-by-Step Install
+**Install Composer** — the PHP package manager:
 
 ```bash
-# 1. Create subdomain in cPanel: hourly.hexawebsystems.com
-#    Document root: /home/account/hourly.hexawebsystems.com/public
-#    (MUST end in /public)
+# The standard installer may segfault on some systems. Download the phar directly:
+curl -sS https://getcomposer.org/download/latest-stable/composer.phar -o /usr/local/bin/composer
+chmod +x /usr/local/bin/composer
+composer --version
+```
 
-# 2. Create MySQL database in cPanel
-#    Database: hws_billing
-#    User: hws_user (with ALL PRIVILEGES)
+### Step 2 — Create Subdomain in cPanel
 
-# 3. Install Laravel
-cd /home/account
-composer create-project laravel/laravel hourly.hexawebsystems.com
-cd hourly.hexawebsystems.com
+In cPanel → Domains → Create a New Domain:
+- Domain: `billing.hexawebsystems.com`
+- Document root: `/home/hexawebsystems/public_html/billing.hexawebsystems.com`
 
-# 4. Clone HWS repo or copy files into the Laravel project
-#    Overwrite: config/, database/, app/, resources/views/, routes/web.php, .env.example
+### Step 3 — Create MySQL Database in cPanel
 
-# 5. Configure environment
-cp .env.example .env
+In cPanel → MySQL Databases:
+1. Create database (e.g., `hexawebsystems_billing`)
+2. Create user (e.g., `hexa_billing_user`) with a strong password
+3. Add user to database with **ALL PRIVILEGES**
+
+### Step 4 — Install Laravel
+
+```bash
+cd /home/hexawebsystems/public_html
+composer create-project laravel/laravel billing-temp
+```
+
+### Step 5 — Clone HWS Repo
+
+```bash
+cd /home/hexawebsystems/public_html/billing.hexawebsystems.com
+
+# Initialize git and pull the HWS codebase
+git init
+git config --global --add safe.directory /home/hexawebsystems/public_html/billing.hexawebsystems.com
+git remote add origin https://github.com/mikeyperes/hws-billing-system-hourly.git
+git pull origin main
+```
+
+### Step 6 — Merge Laravel Framework into HWS
+
+```bash
+# Copy Laravel's framework files into HWS (won't overwrite existing HWS files)
+cp -rn /home/hexawebsystems/public_html/billing-temp/* /home/hexawebsystems/public_html/billing.hexawebsystems.com/
+cp -rn /home/hexawebsystems/public_html/billing-temp/.* /home/hexawebsystems/public_html/billing.hexawebsystems.com/ 2>/dev/null
+
+# Clean up the temp Laravel install
+rm -rf /home/hexawebsystems/public_html/billing-temp
+```
+
+### Step 7 — Configure Environment
+
+```bash
+cd /home/hexawebsystems/public_html/billing.hexawebsystems.com
+
+# Write the .env file (edit the DB credentials to match your setup)
+cat > .env << 'ENVFILE'
+APP_NAME="HWS Billing"
+APP_ENV=production
+APP_KEY=
+APP_DEBUG=false
+APP_URL=https://billing.hexawebsystems.com
+
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=hexawebsystems_billing
+DB_USERNAME=hexa_billing_user
+DB_PASSWORD="YOUR_DB_PASSWORD_HERE"
+
+SESSION_DRIVER=file
+SESSION_SECURE_COOKIE=false
+SESSION_DOMAIN=billing.hexawebsystems.com
+CACHE_STORE=file
+QUEUE_CONNECTION=sync
+
+STRIPE_SECRET_KEY=sk_test_your_stripe_key_here
+
+GOOGLE_CREDENTIALS_PATH=/home/hexawebsystems/public_html/billing.hexawebsystems.com/storage/app/google-credentials.json
+GOOGLE_SERVICE_ACCOUNT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com
+
+HWS_SMTP_HOST=smtp-relay.brevo.com
+HWS_SMTP_PORT=587
+HWS_SMTP_USERNAME=your_brevo_login_email
+HWS_SMTP_PASSWORD=your_brevo_api_key
+HWS_FROM_NAME="Hexa Web Systems"
+HWS_FROM_EMAIL=billing@hexawebsystems.com
+
+HWS_COMPANY_NAME="Hexa Web Systems"
+HWS_DEFAULT_HOURLY_RATE=100
+HWS_CREDIT_LOW_THRESHOLD=4
+HWS_TIMEZONE=America/New_York
+ENVFILE
+
+# Generate Laravel encryption key
 php artisan key:generate
-nano .env  # Fill in ALL values — see .env.example for documentation
+```
 
-# 6. Upload Google credentials JSON
-#    Place at: storage/app/google-credentials.json
-#    (or wherever GOOGLE_CREDENTIALS_PATH points in .env)
+### Step 8 — Redirect Domain Root to /public
 
-# 7. Install PHP dependencies
+The domain points to the project root, but Laravel serves from `/public`. Add a redirect:
+
+```bash
+cat > /home/hexawebsystems/public_html/billing.hexawebsystems.com/.htaccess << 'EOF'
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+EOF
+```
+
+### Step 9 — Install PHP Dependencies
+
+```bash
+cd /home/hexawebsystems/public_html/billing.hexawebsystems.com
+
 composer require stripe/stripe-php
 composer require google/apiclient
 composer require phpmailer/phpmailer
+```
 
-# 8. Install Laravel authentication (Breeze)
-composer require laravel/breeze --dev
-php artisan breeze:install blade
+### Step 10 — Set Permissions
 
-# 9. Run migrations and seed default data
-php artisan migrate
-php artisan db:seed --class=HwsSeeder
-
-# 10. Set permissions
+```bash
 chmod -R 775 storage bootstrap/cache
-chown -R account:account .
+chown -R hexawebsystems:hexawebsystems storage bootstrap/cache
+mkdir -p storage/framework/sessions
+mkdir -p storage/framework/views
+mkdir -p storage/framework/cache
+chown -R hexawebsystems:hexawebsystems storage
+```
 
-# 11. Login at https://hourly.hexawebsystems.com/login
-#     Email: admin@hexawebsystems.com
-#     Password: changeme123
-#     *** CHANGE PASSWORD IMMEDIATELY ***
+### Step 11 — Run Migrations and Seed
+
+```bash
+php artisan migrate --force
+php artisan db:seed --class=HwsSeeder --force
+```
+
+### Step 12 — Upload Google Credentials
+
+Place your Google service account JSON key file at:
+
+```
+storage/app/google-credentials.json
+```
+
+(Or wherever `GOOGLE_CREDENTIALS_PATH` points in `.env`)
+
+### Step 13 — Login
+
+Navigate to `https://billing.hexawebsystems.com/login`
+
+- **Email:** `admin@hexawebsystems.com`
+- **Password:** `changeme123`
+
+**Change the password immediately after first login.**
+
+### Updating the Code
+
+To pull the latest changes from the repo:
+
+```bash
+cd /home/hexawebsystems/public_html/billing.hexawebsystems.com
+git pull origin main
+php artisan migrate --force
+php artisan config:clear
+php artisan cache:clear
+php artisan view:clear
+```
+
+### Troubleshooting Quick Reference
+
+```bash
+# 419 PAGE EXPIRED — CSRF/session issue
+# Add to .env:
+# SESSION_SECURE_COOKIE=false
+# SESSION_DOMAIN=billing.hexawebsystems.com
+php artisan config:clear
+
+# 500 error — check the log
+cat storage/logs/laravel.log
+
+# "could not find driver" — MySQL driver missing
+yum install ea-php84-php-mysqlnd
+systemctl restart httpd
+
+# Permission errors
+chmod -R 775 storage bootstrap/cache
+chown -R hexawebsystems:hexawebsystems storage bootstrap/cache
+
+# Git "dubious ownership" error
+git config --global --add safe.directory /home/hexawebsystems/public_html/billing.hexawebsystems.com
+
+# Clear all caches
+php artisan config:clear
+php artisan cache:clear
+php artisan view:clear
+
+# Composer not found
+curl -sS https://getcomposer.org/download/latest-stable/composer.phar -o /usr/local/bin/composer
+chmod +x /usr/local/bin/composer
 ```
 
 ### Post-Install Checklist
