@@ -9,7 +9,12 @@ use App\Http\Controllers\ScanController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\EmailTemplateController;
 use App\Http\Controllers\ListController;
+use App\Http\Controllers\InfoController;
+use App\Http\Controllers\DebugController;
+use App\Http\Controllers\HostingController;
+use App\Http\Controllers\InvoiceGeneratorController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\ForgotPasswordController;
 
 /*
 |--------------------------------------------------------------------------
@@ -36,6 +41,16 @@ Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
 Route::post('/login', [LoginController::class, 'login']);
 // Logout (requires auth to prevent CSRF issues)
 Route::post('/logout', [LoginController::class, 'logout'])->name('logout')->middleware('auth');
+
+// ── Forgot Password Routes (public) ──
+// Show the forgot password form
+Route::get('/forgot-password', [ForgotPasswordController::class, 'showRequestForm'])->name('password.request');
+// Send the reset link email
+Route::post('/forgot-password', [ForgotPasswordController::class, 'sendResetLink'])->name('password.email');
+// Show the reset form (user clicks link in email)
+Route::get('/reset-password/{token}', [ForgotPasswordController::class, 'showResetForm'])->name('password.reset');
+// Process the password reset
+Route::post('/reset-password', [ForgotPasswordController::class, 'resetPassword'])->name('password.update');
 
 // ── All authenticated routes ──
 Route::middleware(['auth'])->group(function () {
@@ -128,6 +143,28 @@ Route::middleware(['auth'])->group(function () {
     // Delete a list item
     Route::delete('/lists/{list}', [ListController::class, 'destroy'])->name('lists.destroy');
 
+    // ── Hexa Cloud Services ──
+    // Cloud services dashboard
+    Route::get('/hosting', [HostingController::class, 'index'])->name('hosting.index');
+    // WHM Servers
+    Route::get('/hosting/servers', [HostingController::class, 'servers'])->name('hosting.servers');
+    Route::get('/hosting/servers/create', [HostingController::class, 'createServer'])->name('hosting.server.create');
+    Route::post('/hosting/servers', [HostingController::class, 'storeServer'])->name('hosting.server.store');
+    Route::get('/hosting/servers/{server}/edit', [HostingController::class, 'editServer'])->name('hosting.server.edit');
+    Route::put('/hosting/servers/{server}', [HostingController::class, 'updateServer'])->name('hosting.server.update');
+    // Hosting Accounts
+    Route::get('/hosting/accounts', [HostingController::class, 'accounts'])->name('hosting.accounts');
+    Route::get('/hosting/accounts/{account}/edit', [HostingController::class, 'editAccount'])->name('hosting.account.edit');
+    Route::put('/hosting/accounts/{account}', [HostingController::class, 'updateAccount'])->name('hosting.account.update');
+    // Hosting Subscriptions
+    Route::post('/hosting/accounts/{account}/subscriptions', [HostingController::class, 'addSubscription'])->name('hosting.subscription.add');
+    Route::delete('/hosting/subscriptions/{subscription}', [HostingController::class, 'removeSubscription'])->name('hosting.subscription.remove');
+
+    // ── Invoice Generator ──
+    // Quick invoice parameter tool
+    Route::get('/invoice-generator', [InvoiceGeneratorController::class, 'index'])->name('invoice-generator.index');
+    Route::post('/invoice-generator', [InvoiceGeneratorController::class, 'generate'])->name('invoice-generator.generate');
+
     // ── Settings ──
     // Settings page
     Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
@@ -135,4 +172,20 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/settings', [SettingController::class, 'update'])->name('settings.update');
     // Send test email
     Route::post('/settings/test-email', [SettingController::class, 'testEmail'])->name('settings.test-email');
+
+    // ── System Info ──
+    // System info, git details, command reference
+    Route::get('/info', [InfoController::class, 'index'])->name('info.index');
+
+    // ── Debug Modules (only accessible when debug_mode is true) ──
+    // Debug modules index
+    Route::get('/debug', [DebugController::class, 'index'])->name('debug.index');
+    // Google Sheets debug
+    Route::match(['get', 'post'], '/debug/google', [DebugController::class, 'google'])->name('debug.google');
+    // Stripe debug
+    Route::match(['get', 'post'], '/debug/stripe', [DebugController::class, 'stripe'])->name('debug.stripe');
+    // Email debug
+    Route::match(['get', 'post'], '/debug/email', [DebugController::class, 'email'])->name('debug.email');
+    // Database debug
+    Route::match(['get', 'post'], '/debug/database', [DebugController::class, 'database'])->name('debug.database');
 });

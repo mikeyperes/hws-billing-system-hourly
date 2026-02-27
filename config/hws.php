@@ -1,7 +1,7 @@
 <?php
 
 /**
- * HWS - Hourly Bill Tracking System
+ * Hexa Billing System
  * ===========================================
  * Central configuration file.
  * ALL system constants and defaults live here.
@@ -12,15 +12,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Version
+    |--------------------------------------------------------------------------
+    */
+
+    // System version — updated with every code change
+    'version' => '1.3.0',
+
+    /*
+    |--------------------------------------------------------------------------
     | General System Settings
     |--------------------------------------------------------------------------
     */
 
     // Application display name — shown in browser title and email templates
-    'app_name' => env('HWS_APP_NAME', 'HWS - Hourly Bill Tracking System'),
+    'app_name' => env('HWS_APP_NAME', 'Hexa Billing System'),
 
     // Company name — used in email templates via {{company_name}} shortcode
     'company_name' => env('HWS_COMPANY_NAME', 'Hexa Web Systems'),
+
+    // Debug mode — enables debug modules in the sidebar for testing integrations
+    // Set to true during development/troubleshooting, false for production
+    'debug_mode' => env('HWS_DEBUG_MODE', false),
 
     // Currency code for Stripe API calls (ISO 4217)
     'currency' => 'USD',

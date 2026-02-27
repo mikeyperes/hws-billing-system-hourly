@@ -6,6 +6,9 @@ use App\Models\Client;
 use App\Models\Employee;
 use App\Models\Invoice;
 use App\Models\ScanLog;
+use App\Models\WhmServer;
+use App\Models\HostingAccount;
+use App\Models\HostingSubscription;
 use Illuminate\Http\Request;
 
 /**
@@ -56,24 +59,30 @@ class DashboardController extends Controller
 
         // Build system health information
         $systemHealth = [
-            // Last scan timestamp (or 'Never' if no scans have run)
             'last_scan' => ScanLog::max('completed_at') ?? 'Never',
-            // PHP version running on the server
             'php_version' => phpversion(),
-            // Total active employees being tracked
             'active_employees' => $employees->count(),
-            // Total active clients in the system
             'active_clients' => Client::active()->count(),
+        ];
+
+        // ── Cloud Services summary ──
+        $cloudStats = [
+            'servers'             => WhmServer::count(),
+            'total_accounts'      => HostingAccount::count(),
+            'active_accounts'     => HostingAccount::where('status', 'active')->count(),
+            'active_subscriptions' => HostingSubscription::where('status', 'active')->count(),
+            'monthly_revenue'     => HostingSubscription::where('status', 'active')->where('interval', 'month')->sum('amount_cents'),
         ];
 
         // Render the dashboard view with all data
         return view('dashboard.index', [
-            'employees'        => $employees,        // Employee list
-            'invoiceCounts'    => $invoiceCounts,     // Invoice count summary
-            'invoiceAmounts'   => $invoiceAmounts,    // Invoice amount summary
-            'lowCreditClients' => $lowCreditClients,  // Flagged clients
-            'recentScans'      => $recentScans,       // Recent scan log entries
-            'systemHealth'     => $systemHealth,       // System health data
+            'employees'        => $employees,
+            'invoiceCounts'    => $invoiceCounts,
+            'invoiceAmounts'   => $invoiceAmounts,
+            'lowCreditClients' => $lowCreditClients,
+            'recentScans'      => $recentScans,
+            'systemHealth'     => $systemHealth,
+            'cloudStats'       => $cloudStats,
         ]);
     }
 }
