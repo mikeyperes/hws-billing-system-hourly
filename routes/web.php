@@ -62,9 +62,9 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
     // ── Clients ──
-    // List all clients
     Route::get('/clients', [ClientController::class, 'index'])->name('clients.index');
-    // Show the Stripe import tool
+    Route::get('/clients/create', [ClientController::class, 'create'])->name('clients.create');
+    Route::post('/clients', [ClientController::class, 'store'])->name('clients.store');
     Route::get('/clients/import', [ClientController::class, 'showImport'])->name('clients.import');
     // Process the Stripe import
     Route::post('/clients/import', [ClientController::class, 'processImport'])->name('clients.import.process');

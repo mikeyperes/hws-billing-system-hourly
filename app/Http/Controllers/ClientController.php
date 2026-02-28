@@ -47,21 +47,54 @@ class ClientController extends Controller
      */
     public function index()
     {
-        // Get all clients (including inactive) with their invoice counts
         $clients = Client::withCount('invoices')
+            ->with('stripeLinks')
             ->orderBy('name')
             ->paginate(config('hws.per_page'));
 
-        // Render the client list view
         return view('clients.index', [
-            'clients' => $clients,  // Paginated client collection
+            'clients' => $clients,
         ]);
     }
 
     /**
+     * Show the create client form.
+     */
+    public function create()
+    {
+        $billingTypes = ListItem::getValues('customer_billing_type');
+        return view('clients.create', ['billingTypes' => $billingTypes]);
+    }
+
+    /**
+     * Store a new client.
+     */
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'name'         => 'required|string|max:255',
+            'email'        => 'nullable|email|max:255',
+            'hourly_rate'  => 'nullable|numeric|min:0',
+            'billing_type' => 'nullable|string|max:50',
+            'notes'        => 'nullable|string|max:5000',
+        ]);
+
+        $client = Client::create([
+            'name'         => $validated['name'],
+            'email'        => $validated['email'] ?? null,
+            'hourly_rate'  => $validated['hourly_rate'] ?? config('hws.default_hourly_rate'),
+            'billing_type' => $validated['billing_type'] ?? null,
+            'notes'        => $validated['notes'] ?? null,
+            'is_active'    => true,
+        ]);
+
+        return redirect()
+            ->route('clients.edit', $client)
+            ->with('success', 'Client "' . $client->name . '" created. Attach Stripe profiles below.');
+    }
+
+    /**
      * Display the Stripe import tool page.
-     *
-     * @return \Illuminate\View\View
      */
     public function showImport()
     {
