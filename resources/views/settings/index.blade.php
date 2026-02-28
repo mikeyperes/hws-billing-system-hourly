@@ -58,8 +58,53 @@
             </form>
         </div>
 
-        {{-- ═══ Sidebar: Test Email + Server Info ═══ --}}
+        {{-- ═══ Sidebar: Stripe Accounts + Employees + Test Email + Server Info ═══ --}}
         <div class="space-y-6">
+
+            {{-- Stripe Accounts --}}
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-semibold text-gray-800">Stripe Accounts</h3>
+                    <a href="{{ route('settings.stripe-accounts.index') }}" class="text-xs text-blue-600 hover:underline">Manage →</a>
+                </div>
+                @php $stripeAccounts = \App\Models\StripeAccount::orderBy('name')->get(); @endphp
+                @if($stripeAccounts->isEmpty())
+                    <p class="text-sm text-gray-400">No Stripe accounts configured.</p>
+                @else
+                    <div class="space-y-1">
+                        @foreach($stripeAccounts as $acct)
+                            <div class="flex items-center justify-between text-sm">
+                                <span class="text-gray-700">{{ $acct->name }}</span>
+                                <span class="w-2 h-2 rounded-full {{ $acct->is_active ? 'bg-green-400' : 'bg-gray-300' }}"></span>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
+            </div>
+
+            {{-- Active Employees --}}
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-semibold text-gray-800">Employees</h3>
+                    <a href="{{ route('employees.index') }}" class="text-xs text-blue-600 hover:underline">Manage →</a>
+                </div>
+                @php $employees = \App\Models\Employee::orderBy('name')->get(); @endphp
+                @if($employees->isEmpty())
+                    <p class="text-sm text-gray-400">No employees configured.</p>
+                @else
+                    <div class="space-y-1">
+                        @foreach($employees as $emp)
+                            <div class="flex items-center justify-between text-sm">
+                                <a href="{{ route('employees.edit', $emp) }}" class="text-gray-700 hover:text-blue-600">{{ $emp->name }}</a>
+                                <div class="flex items-center gap-1">
+                                    <span class="text-xs text-gray-400">PK:{{ $emp->scan_start_primary_key }}</span>
+                                    <span class="w-2 h-2 rounded-full {{ $emp->is_active ? 'bg-green-400' : 'bg-gray-300' }}"></span>
+                                </div>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
+            </div>
 
             {{-- SMTP Test --}}
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -89,6 +134,27 @@
                         </div>
                     @endforeach
                 </div>
+            </div>
+
+            {{-- Change Password --}}
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 class="font-semibold text-gray-800 mb-3">Change Password</h3>
+                <form method="POST" action="{{ route('settings.change-password') }}">
+                    @csrf
+                    <div class="mb-3">
+                        <label class="block text-xs text-gray-500 mb-1">Current Password</label>
+                        <input type="password" name="current_password" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-xs text-gray-500 mb-1">New Password</label>
+                        <input type="password" name="new_password" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" required minlength="8">
+                    </div>
+                    <div class="mb-3">
+                        <label class="block text-xs text-gray-500 mb-1">Confirm New Password</label>
+                        <input type="password" name="new_password_confirmation" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" required>
+                    </div>
+                    <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 w-full">Update Password</button>
+                </form>
             </div>
         </div>
     </div>

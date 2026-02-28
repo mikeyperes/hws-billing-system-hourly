@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Setting;
 use App\Services\EmailService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Auth;
 
 /**
  * SettingController — manages runtime-editable system settings.
@@ -121,6 +123,31 @@ class SettingController extends Controller
         return redirect()
             ->route('settings.index')
             ->with($messageType, $result['message']);
+    }
+
+    /**
+     * Change the authenticated user's password.
+     */
+    public function changePassword(Request $request)
+    {
+        $validated = $request->validate([
+            'current_password' => 'required|string',
+            'new_password'     => 'required|string|min:8|confirmed',
+        ]);
+
+        if (!Hash::check($validated['current_password'], Auth::user()->password)) {
+            return redirect()
+                ->route('settings.index')
+                ->with('error', 'Current password is incorrect.');
+        }
+
+        Auth::user()->update([
+            'password' => Hash::make($validated['new_password']),
+        ]);
+
+        return redirect()
+            ->route('settings.index')
+            ->with('success', 'Password changed successfully.');
     }
 
     /**

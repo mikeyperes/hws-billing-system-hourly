@@ -63,11 +63,15 @@ class ClientController extends Controller
     public function create()
     {
         $billingTypes = ListItem::getValues('customer_billing_type');
-        return view('clients.create', ['billingTypes' => $billingTypes]);
+        $stripeAccounts = StripeAccount::active()->orderBy('name')->get();
+        return view('clients.create', [
+            'billingTypes'   => $billingTypes,
+            'stripeAccounts' => $stripeAccounts,
+        ]);
     }
 
     /**
-     * Store a new client.
+     * Store a new client with optional Stripe profile links.
      */
     public function store(Request $request)
     {
@@ -77,6 +81,11 @@ class ClientController extends Controller
             'hourly_rate'  => 'nullable|numeric|min:0',
             'billing_type' => 'nullable|string|max:50',
             'notes'        => 'nullable|string|max:5000',
+            'stripe_links'               => 'nullable|array',
+            'stripe_links.*.stripe_account_id'  => 'nullable|exists:stripe_accounts,id',
+            'stripe_links.*.stripe_customer_id' => 'nullable|string|max:255',
+            'primary_billing'            => 'nullable|integer',
+            'hourly_billing'             => 'nullable|integer',
         ]);
 
         $client = Client::create([
@@ -88,9 +97,23 @@ class ClientController extends Controller
             'is_active'    => true,
         ]);
 
+        // Create Stripe links
+        if (!empty($validated['stripe_links'])) {
+            foreach ($validated['stripe_links'] as $index => $linkData) {
+                if (empty($linkData['stripe_account_id']) || empty($linkData['stripe_customer_id'])) continue;
+                ClientStripeLink::create([
+                    'client_id'          => $client->id,
+                    'stripe_account_id'  => $linkData['stripe_account_id'],
+                    'stripe_customer_id' => $linkData['stripe_customer_id'],
+                    'is_primary_billing' => ($request->input('primary_billing') == $index),
+                    'is_hourly_billing'  => ($request->input('hourly_billing') == $index),
+                ]);
+            }
+        }
+
         return redirect()
             ->route('clients.edit', $client)
-            ->with('success', 'Client "' . $client->name . '" created. Attach Stripe profiles below.');
+            ->with('success', 'Client "' . $client->name . '" created.');
     }
 
     /**

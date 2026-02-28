@@ -197,6 +197,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
     Route::post('/settings', [SettingController::class, 'update'])->name('settings.update');
     Route::post('/settings/test-email', [SettingController::class, 'testEmail'])->name('settings.test-email');
+    Route::post('/settings/change-password', [SettingController::class, 'changePassword'])->name('settings.change-password');
 
     // ── Stripe Accounts (under Settings) ──
     Route::get('/settings/stripe-accounts', [StripeAccountController::class, 'index'])->name('settings.stripe-accounts.index');

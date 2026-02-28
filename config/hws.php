@@ -17,7 +17,7 @@ return [
     */
 
     // System version — updated with every code change
-    'version' => '1.6.1',
+    'version' => '1.6.2',
 
     /*
     |--------------------------------------------------------------------------
