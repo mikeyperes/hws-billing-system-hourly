@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Client;
+use App\Models\ClientStripeLink;
 use App\Models\ListItem;
+use App\Models\StripeAccount;
 use App\Services\StripeService;
 use App\Services\GenericService;
 use Illuminate\Http\Request;
@@ -63,8 +65,8 @@ class ClientController extends Controller
      */
     public function showImport()
     {
-        // Render the import form (textarea + debug panel)
-        return view('clients.import');
+        $stripeAccounts = StripeAccount::active()->orderBy('name')->get();
+        return view('clients.import', ['stripeAccounts' => $stripeAccounts]);
     }
 
     /**
@@ -77,59 +79,69 @@ class ClientController extends Controller
      */
     public function processImport(Request $request)
     {
-        // Validate that the stripe_ids field is present and is a string
         $request->validate([
-            'stripe_ids' => 'required|string',
+            'stripe_ids'        => 'required|string',
+            'stripe_account_id' => 'nullable|integer|exists:stripe_accounts,id',
         ]);
 
-        // Parse the comma-separated IDs into an array using GenericService
         $stripeIds = $this->generic->parseCommaSeparated($request->input('stripe_ids'));
-
-        // Initialize the results array for the debug panel
+        $stripeAccountId = $request->input('stripe_account_id') ?: null;
         $results = [];
 
-        // Process each Stripe Customer ID
         foreach ($stripeIds as $stripeId) {
-            // Check if this customer is already imported
+            // Check if this customer is already imported (legacy check)
             $existing = Client::where('stripe_customer_id', $stripeId)->first();
 
-            // Skip if already imported
+            // Also check the pivot table
+            if (!$existing && $stripeAccountId) {
+                $existingLink = ClientStripeLink::where('stripe_customer_id', $stripeId)
+                    ->where('stripe_account_id', $stripeAccountId)
+                    ->first();
+                if ($existingLink) {
+                    $existing = $existingLink->client;
+                }
+            }
+
             if ($existing) {
-                // Record skip in debug log
                 $results[] = [
                     'stripe_id' => $stripeId,
                     'status'    => 'skipped',
                     'message'   => 'Already imported as "' . $existing->name . '"',
                 ];
-                // Continue to next ID
                 continue;
             }
 
-            // Retrieve customer details from Stripe
-            $stripeResult = $this->stripe->getCustomer($stripeId);
+            // Retrieve customer from Stripe (using selected account)
+            $stripeResult = $this->stripe->getCustomer($stripeId, $stripeAccountId);
 
-            // Check if the Stripe call succeeded
             if (!$stripeResult['success']) {
-                // Record failure in debug log
                 $results[] = [
                     'stripe_id' => $stripeId,
                     'status'    => 'error',
                     'message'   => $stripeResult['error'] ?? 'Unknown Stripe error',
                 ];
-                // Continue to next ID
                 continue;
             }
 
-            // Create the local client record
+            // Create the client record
             $client = Client::create([
-                'name'               => $stripeResult['data']['name'],   // Name from Stripe
-                'email'              => $stripeResult['data']['email'],  // Email from Stripe
-                'stripe_customer_id' => $stripeId,                       // Stripe Customer ID
-                'hourly_rate'        => config('hws.default_hourly_rate'), // Default rate from config
-                'is_active'          => true,                             // Active by default
+                'name'               => $stripeResult['data']['name'],
+                'email'              => $stripeResult['data']['email'],
+                'stripe_customer_id' => $stripeId, // Legacy field
+                'hourly_rate'        => config('hws.default_hourly_rate'),
+                'is_active'          => true,
             ]);
 
-            // Record success in debug log
+            // Create the pivot link if a Stripe account was selected
+            if ($stripeAccountId) {
+                ClientStripeLink::create([
+                    'client_id'          => $client->id,
+                    'stripe_account_id'  => $stripeAccountId,
+                    'stripe_customer_id' => $stripeId,
+                    'is_hourly_billing'  => true, // First import = default hourly
+                ]);
+            }
+
             $results[] = [
                 'stripe_id' => $stripeId,
                 'status'    => 'success',
@@ -137,10 +149,12 @@ class ClientController extends Controller
             ];
         }
 
-        // Render the import page with debug results
+        $stripeAccounts = StripeAccount::active()->orderBy('name')->get();
+
         return view('clients.import', [
-            'results' => $results,                          // Import debug log
-            'originalInput' => $request->input('stripe_ids'), // Preserve textarea content
+            'results'        => $results,
+            'originalInput'  => $request->input('stripe_ids'),
+            'stripeAccounts' => $stripeAccounts,
         ]);
     }
 
@@ -152,13 +166,26 @@ class ClientController extends Controller
      */
     public function edit(Client $client)
     {
-        // Get billing type options from the Lists module
         $billingTypes = ListItem::getValues('customer_billing_type');
+        $stripeAccounts = StripeAccount::active()->orderBy('name')->get();
+        $stripeLinks = $client->stripeLinks()->with('stripeAccount')->get();
 
-        // Render the edit view
+        // Fetch Stripe customer details for each link
+        $stripeDetails = [];
+        foreach ($stripeLinks as $link) {
+            $result = $this->stripe->getCustomerDetails(
+                $link->stripe_customer_id,
+                $link->stripe_account_id
+            );
+            $stripeDetails[$link->id] = $result['success'] ? $result['data'] : null;
+        }
+
         return view('clients.edit', [
-            'client'       => $client,       // The client being edited
-            'billingTypes' => $billingTypes,  // Dropdown options for billing type
+            'client'         => $client,
+            'billingTypes'   => $billingTypes,
+            'stripeAccounts' => $stripeAccounts,
+            'stripeLinks'    => $stripeLinks,
+            'stripeDetails'  => $stripeDetails,
         ]);
     }
 
@@ -243,5 +270,101 @@ class ClientController extends Controller
         return redirect()
             ->route('clients.edit', $client)
             ->with('success', $message);
+    }
+
+    /**
+     * Add a Stripe link to a client.
+     */
+    public function addStripeLink(Request $request, Client $client)
+    {
+        $validated = $request->validate([
+            'stripe_account_id'  => 'required|exists:stripe_accounts,id',
+            'stripe_customer_id' => 'required|string|max:255',
+            'is_hourly_billing'  => 'boolean',
+            'is_primary_billing' => 'boolean',
+        ]);
+
+        // If setting as hourly billing, clear any existing hourly flag
+        if ($request->has('is_hourly_billing') && $request->is_hourly_billing) {
+            $client->stripeLinks()->update(['is_hourly_billing' => false]);
+        }
+
+        // If setting as primary billing, clear any existing primary flag
+        if ($request->has('is_primary_billing') && $request->is_primary_billing) {
+            $client->stripeLinks()->update(['is_primary_billing' => false]);
+        }
+
+        // Check for existing link to this account
+        $existing = ClientStripeLink::where('client_id', $client->id)
+            ->where('stripe_account_id', $validated['stripe_account_id'])
+            ->first();
+
+        if ($existing) {
+            return redirect()
+                ->route('clients.edit', $client)
+                ->with('error', 'Client already has a link to this Stripe account.');
+        }
+
+        ClientStripeLink::create([
+            'client_id'          => $client->id,
+            'stripe_account_id'  => $validated['stripe_account_id'],
+            'stripe_customer_id' => $validated['stripe_customer_id'],
+            'is_hourly_billing'  => $request->has('is_hourly_billing'),
+            'is_primary_billing' => $request->has('is_primary_billing'),
+        ]);
+
+        return redirect()
+            ->route('clients.edit', $client)
+            ->with('success', 'Stripe link added.');
+    }
+
+    /**
+     * Remove a Stripe link from a client.
+     */
+    public function removeStripeLink(Client $client, ClientStripeLink $link)
+    {
+        if ($link->client_id !== $client->id) {
+            abort(403);
+        }
+
+        $link->delete();
+
+        return redirect()
+            ->route('clients.edit', $client)
+            ->with('success', 'Stripe link removed.');
+    }
+
+    /**
+     * Set a Stripe link as the hourly billing profile.
+     */
+    public function setHourlyBilling(Client $client, ClientStripeLink $link)
+    {
+        if ($link->client_id !== $client->id) {
+            abort(403);
+        }
+
+        $client->stripeLinks()->update(['is_hourly_billing' => false]);
+        $link->update(['is_hourly_billing' => true]);
+
+        return redirect()
+            ->route('clients.edit', $client)
+            ->with('success', 'Hourly billing profile updated.');
+    }
+
+    /**
+     * Set a Stripe link as the primary billing source.
+     */
+    public function setPrimaryBilling(Client $client, ClientStripeLink $link)
+    {
+        if ($link->client_id !== $client->id) {
+            abort(403);
+        }
+
+        $client->stripeLinks()->update(['is_primary_billing' => false]);
+        $link->update(['is_primary_billing' => true]);
+
+        return redirect()
+            ->route('clients.edit', $client)
+            ->with('success', 'Primary billing source updated.');
     }
 }

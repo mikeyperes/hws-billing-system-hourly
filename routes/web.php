@@ -15,6 +15,8 @@ use App\Http\Controllers\HostingController;
 use App\Http\Controllers\InvoiceGeneratorController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
+use App\Http\Controllers\StripeAccountController;
+use App\Http\Controllers\InvoicingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -72,6 +74,11 @@ Route::middleware(['auth'])->group(function () {
     Route::put('/clients/{client}', [ClientController::class, 'update'])->name('clients.update');
     // Adjust client credit balance
     Route::post('/clients/{client}/credits', [ClientController::class, 'adjustCredits'])->name('clients.credits');
+    // Client Stripe links
+    Route::post('/clients/{client}/stripe-link', [ClientController::class, 'addStripeLink'])->name('clients.stripe-link.add');
+    Route::delete('/clients/{client}/stripe-link/{link}', [ClientController::class, 'removeStripeLink'])->name('clients.stripe-link.remove');
+    Route::post('/clients/{client}/stripe-link/{link}/set-hourly', [ClientController::class, 'setHourlyBilling'])->name('clients.stripe-link.set-hourly');
+    Route::post('/clients/{client}/stripe-link/{link}/set-primary', [ClientController::class, 'setPrimaryBilling'])->name('clients.stripe-link.set-primary');
 
     // ── Employees ──
     // List all employees
@@ -152,6 +159,10 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/hosting/servers', [HostingController::class, 'storeServer'])->name('hosting.server.store');
     Route::get('/hosting/servers/{server}/edit', [HostingController::class, 'editServer'])->name('hosting.server.edit');
     Route::put('/hosting/servers/{server}', [HostingController::class, 'updateServer'])->name('hosting.server.update');
+    Route::post('/hosting/servers/{server}/test', [HostingController::class, 'testServer'])->name('hosting.server.test');
+    Route::post('/hosting/servers/{server}/sync', [HostingController::class, 'syncServer'])->name('hosting.server.sync');
+    Route::get('/hosting/servers/{server}/info', [HostingController::class, 'serverInfo'])->name('hosting.server-info');
+    Route::post('/hosting/sync-all', [HostingController::class, 'syncAll'])->name('hosting.sync-all');
     // Hosting Accounts
     Route::get('/hosting/accounts', [HostingController::class, 'accounts'])->name('hosting.accounts');
     Route::get('/hosting/accounts/{account}/edit', [HostingController::class, 'editAccount'])->name('hosting.account.edit');
@@ -159,19 +170,42 @@ Route::middleware(['auth'])->group(function () {
     // Hosting Subscriptions
     Route::post('/hosting/accounts/{account}/subscriptions', [HostingController::class, 'addSubscription'])->name('hosting.subscription.add');
     Route::delete('/hosting/subscriptions/{subscription}', [HostingController::class, 'removeSubscription'])->name('hosting.subscription.remove');
+    Route::post('/hosting/subscriptions/{subscription}/refresh', [HostingController::class, 'refreshSubscription'])->name('hosting.subscription.refresh');
+    // Subscription Mapping Tool
+    Route::get('/hosting/mapping', [HostingController::class, 'mappingTool'])->name('hosting.mapping-tool');
+    Route::post('/hosting/mapping/run', [HostingController::class, 'runMapping'])->name('hosting.mapping.run');
+    Route::post('/hosting/mapping/quick-link', [HostingController::class, 'quickLink'])->name('hosting.mapping.quick-link');
+    // Server Maintenance
+    Route::get('/hosting/maintenance', [HostingController::class, 'maintenance'])->name('hosting.maintenance');
+    Route::post('/hosting/maintenance/run', [HostingController::class, 'runScript'])->name('hosting.maintenance.run');
 
-    // ── Invoice Generator ──
-    // Quick invoice parameter tool
-    Route::get('/invoice-generator', [InvoiceGeneratorController::class, 'index'])->name('invoice-generator.index');
-    Route::post('/invoice-generator', [InvoiceGeneratorController::class, 'generate'])->name('invoice-generator.generate');
+    // ── Invoicing Center ──
+    Route::get('/invoicing', [InvoicingController::class, 'index'])->name('invoicing.index');
+    Route::post('/invoicing/create', [InvoicingController::class, 'createInvoice'])->name('invoicing.create');
+    Route::get('/invoicing/client-billing/{client}', [InvoicingController::class, 'getClientBilling'])->name('invoicing.client-billing');
+    Route::get('/invoicing/template/{template}', [InvoicingController::class, 'getTemplate'])->name('invoicing.template.get');
+    // Item Templates
+    Route::get('/invoicing/templates', [InvoicingController::class, 'templateIndex'])->name('invoicing.templates');
+    Route::post('/invoicing/templates', [InvoicingController::class, 'storeTemplate'])->name('invoicing.template.store');
+    Route::put('/invoicing/templates/{template}', [InvoicingController::class, 'updateTemplate'])->name('invoicing.template.update');
+    Route::delete('/invoicing/templates/{template}', [InvoicingController::class, 'destroyTemplate'])->name('invoicing.template.destroy');
+
+    // ── Legacy Invoice Generator (redirects) ──
+    Route::get('/invoice-generator', fn () => redirect()->route('invoicing.index'))->name('invoice-generator.index');
 
     // ── Settings ──
-    // Settings page
     Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
-    // Update settings
     Route::post('/settings', [SettingController::class, 'update'])->name('settings.update');
-    // Send test email
     Route::post('/settings/test-email', [SettingController::class, 'testEmail'])->name('settings.test-email');
+
+    // ── Stripe Accounts (under Settings) ──
+    Route::get('/settings/stripe-accounts', [StripeAccountController::class, 'index'])->name('settings.stripe-accounts.index');
+    Route::get('/settings/stripe-accounts/create', [StripeAccountController::class, 'create'])->name('settings.stripe-accounts.create');
+    Route::post('/settings/stripe-accounts', [StripeAccountController::class, 'store'])->name('settings.stripe-accounts.store');
+    Route::get('/settings/stripe-accounts/{stripeAccount}/edit', [StripeAccountController::class, 'edit'])->name('settings.stripe-accounts.edit');
+    Route::put('/settings/stripe-accounts/{stripeAccount}', [StripeAccountController::class, 'update'])->name('settings.stripe-accounts.update');
+    Route::post('/settings/stripe-accounts/{stripeAccount}/test', [StripeAccountController::class, 'test'])->name('settings.stripe-accounts.test');
+    Route::delete('/settings/stripe-accounts/{stripeAccount}', [StripeAccountController::class, 'destroy'])->name('settings.stripe-accounts.destroy');
 
     // ── System Info ──
     // System info, git details, command reference

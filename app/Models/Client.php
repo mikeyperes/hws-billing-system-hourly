@@ -65,8 +65,47 @@ class Client extends Model
      */
     public function invoices(): HasMany
     {
-        // A client can have many invoices over time
         return $this->hasMany(Invoice::class);
+    }
+
+    /**
+     * Get all Stripe account links for this client.
+     *
+     * @return HasMany
+     */
+    public function stripeLinks(): HasMany
+    {
+        return $this->hasMany(ClientStripeLink::class);
+    }
+
+    /**
+     * Get the hourly billing Stripe link for this client.
+     */
+    public function hourlyBillingLink(): ?ClientStripeLink
+    {
+        return $this->stripeLinks()->where('is_hourly_billing', true)->first();
+    }
+
+    /**
+     * Get the primary billing Stripe link for this client.
+     * This is the default Stripe account/customer used for invoicing.
+     */
+    public function primaryBillingLink(): ?ClientStripeLink
+    {
+        return $this->stripeLinks()
+            ->with('stripeAccount')
+            ->where('is_primary_billing', true)
+            ->first();
+    }
+
+    /**
+     * Check if this client has any Stripe account linked.
+     *
+     * @return bool
+     */
+    public function hasStripeLink(): bool
+    {
+        return $this->stripeLinks()->exists();
     }
 
     /**

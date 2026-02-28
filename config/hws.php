@@ -17,7 +17,7 @@ return [
     */
 
     // System version — updated with every code change
-    'version' => '1.3.2',
+    'version' => '1.6.0',
 
     /*
     |--------------------------------------------------------------------------
@@ -183,6 +183,24 @@ return [
         // Client's remaining prepaid credit balance in hours
         '{{credit_balance}}' => 'Client credit balance (hours)',
         // Company name from settings
+        '{{company_name}}' => 'Company name',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Item Template Shortcodes
+    | Shortcodes available in invoice line item description templates.
+    |--------------------------------------------------------------------------
+    */
+
+    'item_shortcodes' => [
+        '{{client_name}}'  => 'Client name',
+        '{{domain}}'       => 'Client primary domain (if set)',
+        '{{year}}'         => 'Current year (e.g. 2026)',
+        '{{next_year}}'    => 'Next year (e.g. 2027)',
+        '{{month}}'        => 'Current month name (e.g. February)',
+        '{{date}}'         => 'Today\'s date (M j, Y)',
+        '{{interval}}'     => 'Billing interval (Monthly/Annual)',
         '{{company_name}}' => 'Company name',
     ],
 

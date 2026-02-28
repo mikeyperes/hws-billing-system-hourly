@@ -2,339 +2,584 @@
 
 namespace App\Services;
 
+use App\Models\StripeAccount;
 use Stripe\StripeClient;
 use Stripe\Exception\ApiErrorException;
 
 /**
  * StripeService — ALL Stripe API interactions go through this service.
- * Single wrapper for customer retrieval, invoice creation, finalization,
- * sending, and payment status polling.
+ * Supports multiple Stripe accounts. Every method accepts an optional
+ * $stripeAccountId to specify which account to use.
  *
- * NO other file should make Stripe API calls. This is enforced by spec.
+ * Resolution order: explicit account ID → default account in DB → .env fallback.
+ * NO other file should make Stripe API calls (except DebugController connectivity test).
  */
 class StripeService
 {
     /**
-     * @var StripeClient|null The Stripe API client instance
+     * @var array<int|string, StripeClient> Cached clients keyed by account ID
      */
-    protected ?StripeClient $stripe = null;
+    protected array $clients = [];
 
     /**
      * @var GenericService Shared utility service for logging
      */
     protected GenericService $generic;
 
-    /**
-     * Constructor — inject the shared GenericService.
-     *
-     * @param GenericService $generic Shared utility service
-     */
     public function __construct(GenericService $generic)
     {
-        // Store reference to generic service for logging
         $this->generic = $generic;
     }
 
     /**
-     * Get or create the Stripe API client instance.
-     * Lazy-loaded — only initialized when first needed.
+     * Get a StripeClient for the specified account.
+     * Caches clients to avoid re-creating them within the same request.
      *
-     * @return StripeClient The configured Stripe client
-     * @throws \RuntimeException If the Stripe secret key is not configured
+     * Resolution: explicit ID → default DB account → .env STRIPE_SECRET_KEY fallback.
+     *
+     * @param int|null $stripeAccountId Specific Stripe account ID, or null for default
+     * @return StripeClient
+     * @throws \RuntimeException If no Stripe key can be resolved
      */
-    protected function getClient(): StripeClient
+    protected function getClient(?int $stripeAccountId = null): StripeClient
     {
-        // Return existing client if already initialized
-        if ($this->stripe !== null) {
-            return $this->stripe;
+        // Try to resolve a StripeAccount from DB
+        $account = null;
+        if ($stripeAccountId) {
+            $account = StripeAccount::find($stripeAccountId);
+        }
+        if (!$account) {
+            $account = StripeAccount::getDefault();
         }
 
-        // Get the secret key from config/hws.php (which reads from .env)
-        $secretKey = config('hws.stripe.secret_key');
-
-        // Validate that the key is configured
-        if (empty($secretKey)) {
-            // Log the error before throwing
-            $this->generic->log('error', 'Stripe secret key is not configured');
-            // Throw exception — can't proceed without API key
-            throw new \RuntimeException('Stripe secret key is not configured. Check .env file.');
+        // If we have a DB account, use its key
+        if ($account) {
+            $cacheKey = $account->id;
+            if (!isset($this->clients[$cacheKey])) {
+                $secretKey = $account->secret_key;
+                if (empty($secretKey)) {
+                    throw new \RuntimeException('Stripe account "' . $account->name . '" has no secret key configured.');
+                }
+                $this->clients[$cacheKey] = new StripeClient($secretKey);
+            }
+            return $this->clients[$cacheKey];
         }
 
-        // Create and cache the Stripe client instance
-        $this->stripe = new StripeClient($secretKey);
-
-        // Return the initialized client
-        return $this->stripe;
+        // Fallback: use .env key (backward compatibility)
+        $cacheKey = '_env';
+        if (!isset($this->clients[$cacheKey])) {
+            $secretKey = config('hws.stripe.secret_key');
+            if (empty($secretKey)) {
+                $this->generic->log('error', 'No Stripe account configured and no STRIPE_SECRET_KEY in .env');
+                throw new \RuntimeException('No Stripe account configured. Add one in Settings or set STRIPE_SECRET_KEY in .env.');
+            }
+            $this->clients[$cacheKey] = new StripeClient($secretKey);
+        }
+        return $this->clients[$cacheKey];
     }
 
     /**
      * Retrieve a Stripe customer by their Customer ID.
-     * Used during client import to pull name and email.
      *
-     * @param string $customerId Stripe Customer ID (cus_xxxxx)
-     * @return array{success: bool, data?: array, error?: string} Result with customer data or error
+     * @param string   $customerId      Stripe Customer ID (cus_xxxxx)
+     * @param int|null $stripeAccountId Which Stripe account to use (null = default)
+     * @return array{success: bool, data?: array, error?: string}
      */
-    public function getCustomer(string $customerId): array
+    public function getCustomer(string $customerId, ?int $stripeAccountId = null): array
     {
         try {
-            // Call the Stripe Customers API to retrieve the customer
-            $customer = $this->getClient()->customers->retrieve($customerId);
+            $customer = $this->getClient($stripeAccountId)->customers->retrieve($customerId);
 
-            // Log the successful retrieval
             $this->generic->log('info', 'Stripe customer retrieved', [
                 'customer_id' => $customerId,
+                'account_id' => $stripeAccountId,
                 'name' => $customer->name,
             ]);
 
-            // Return the customer data in a standardized format
             return [
                 'success' => true,
                 'data' => [
-                    'id'    => $customer->id,         // Stripe Customer ID
-                    'name'  => $customer->name ?? '',  // Customer display name
-                    'email' => $customer->email ?? '', // Customer email
+                    'id'    => $customer->id,
+                    'name'  => $customer->name ?? '',
+                    'email' => $customer->email ?? '',
                 ],
             ];
-
         } catch (ApiErrorException $e) {
-            // Log the API error with details
             $this->generic->log('error', 'Stripe customer retrieval failed', [
                 'customer_id' => $customerId,
+                'account_id' => $stripeAccountId,
                 'error' => $e->getMessage(),
             ]);
-
-            // Return failure response with error message
-            return [
-                'success' => false,
-                'error' => $e->getMessage(),
-            ];
+            return ['success' => false, 'error' => $e->getMessage()];
         }
     }
 
     /**
-     * Create a draft invoice on Stripe for a given customer.
-     * The invoice is NOT finalized or sent — it stays as a draft.
+     * Create a draft invoice on Stripe.
      *
-     * @param string $customerId  Stripe Customer ID
-     * @param string $description Line item description (e.g., "Consulting — 25.50 hours")
-     * @param int    $amountCents Total amount in cents (Stripe uses smallest currency unit)
-     * @return array{success: bool, data?: array, error?: string} Result with invoice data or error
+     * @param string   $customerId      Stripe Customer ID
+     * @param string   $description     Line item description
+     * @param int      $amountCents     Total amount in cents
+     * @param int|null $stripeAccountId Which Stripe account to use (null = default)
+     * @return array{success: bool, data?: array, error?: string}
      */
     public function createDraftInvoice(
         string $customerId,
         string $description,
-        int $amountCents
+        int $amountCents,
+        ?int $stripeAccountId = null
     ): array {
         try {
-            // Step 1: Create the invoice shell as a draft
-            $invoice = $this->getClient()->invoices->create([
-                // Link to the Stripe customer
+            $client = $this->getClient($stripeAccountId);
+
+            // Create the invoice shell as draft
+            $invoice = $client->invoices->create([
                 'customer' => $customerId,
-                // Keep as draft — admin will finalize/send when ready
                 'auto_advance' => false,
-                // Set currency from config
                 'currency' => strtolower(config('hws.currency')),
             ]);
 
-            // Step 2: Add a line item to the invoice
-            $this->getClient()->invoiceItems->create([
-                // Link to the same customer
+            // Add line item
+            $client->invoiceItems->create([
                 'customer' => $customerId,
-                // Link to the invoice we just created
                 'invoice' => $invoice->id,
-                // Total amount in cents
                 'amount' => $amountCents,
-                // Currency from config
                 'currency' => strtolower(config('hws.currency')),
-                // Human-readable description of the work
                 'description' => $description,
             ]);
 
-            // Log the successful invoice creation
             $this->generic->log('info', 'Stripe draft invoice created', [
                 'invoice_id' => $invoice->id,
                 'customer_id' => $customerId,
+                'account_id' => $stripeAccountId,
                 'amount_cents' => $amountCents,
             ]);
 
-            // Return the invoice data in a standardized format
             return [
                 'success' => true,
                 'data' => [
-                    'id'          => $invoice->id,                // Stripe Invoice ID
-                    'status'      => $invoice->status,            // Should be 'draft'
-                    'hosted_url'  => $invoice->hosted_invoice_url, // URL for client to view/pay
-                    'amount_due'  => $invoice->amount_due,        // Amount in cents
+                    'id'         => $invoice->id,
+                    'status'     => $invoice->status,
+                    'hosted_url' => $invoice->hosted_invoice_url,
+                    'amount_due' => $invoice->amount_due,
                 ],
             ];
-
         } catch (ApiErrorException $e) {
-            // Log the API error with details
             $this->generic->log('error', 'Stripe invoice creation failed', [
                 'customer_id' => $customerId,
+                'account_id' => $stripeAccountId,
                 'amount_cents' => $amountCents,
                 'error' => $e->getMessage(),
             ]);
-
-            // Return failure response with error message
-            return [
-                'success' => false,
-                'error' => $e->getMessage(),
-            ];
+            return ['success' => false, 'error' => $e->getMessage()];
         }
     }
 
     /**
-     * Finalize a draft invoice on Stripe, making it ready to send.
-     * After finalization, the invoice can be sent via Stripe or manually.
+     * Finalize a draft invoice on Stripe.
      *
-     * @param string $invoiceId Stripe Invoice ID (in_xxxxx)
-     * @return array{success: bool, data?: array, error?: string} Result with invoice data or error
+     * @param string   $invoiceId       Stripe Invoice ID (in_xxxxx)
+     * @param int|null $stripeAccountId Which Stripe account to use
+     * @return array{success: bool, data?: array, error?: string}
      */
-    public function finalizeInvoice(string $invoiceId): array
+    public function finalizeInvoice(string $invoiceId, ?int $stripeAccountId = null): array
     {
         try {
-            // Call the Stripe API to finalize the draft invoice
-            $invoice = $this->getClient()->invoices->finalizeInvoice($invoiceId);
+            $invoice = $this->getClient($stripeAccountId)->invoices->finalizeInvoice($invoiceId);
 
-            // Log the successful finalization
             $this->generic->log('info', 'Stripe invoice finalized', [
                 'invoice_id' => $invoiceId,
-                'status' => $invoice->status,
+                'account_id' => $stripeAccountId,
             ]);
 
-            // Return the updated invoice data
             return [
                 'success' => true,
                 'data' => [
-                    'id'         => $invoice->id,                  // Stripe Invoice ID
-                    'status'     => $invoice->status,              // Should be 'open' after finalization
-                    'hosted_url' => $invoice->hosted_invoice_url,  // URL for client to view/pay
+                    'id'         => $invoice->id,
+                    'status'     => $invoice->status,
+                    'hosted_url' => $invoice->hosted_invoice_url,
                 ],
             ];
-
         } catch (ApiErrorException $e) {
-            // Log the API error with details
             $this->generic->log('error', 'Stripe invoice finalization failed', [
                 'invoice_id' => $invoiceId,
                 'error' => $e->getMessage(),
             ]);
-
-            // Return failure response
-            return [
-                'success' => false,
-                'error' => $e->getMessage(),
-            ];
+            return ['success' => false, 'error' => $e->getMessage()];
         }
     }
 
     /**
-     * Send a finalized invoice via Stripe's email system.
-     * Invoice must be finalized before it can be sent.
+     * Send a finalized invoice via Stripe email.
      *
-     * @param string $invoiceId Stripe Invoice ID (in_xxxxx)
-     * @return array{success: bool, data?: array, error?: string} Result with send status or error
+     * @param string   $invoiceId       Stripe Invoice ID (in_xxxxx)
+     * @param int|null $stripeAccountId Which Stripe account to use
+     * @return array{success: bool, data?: array, error?: string}
      */
-    public function sendInvoice(string $invoiceId): array
+    public function sendInvoice(string $invoiceId, ?int $stripeAccountId = null): array
     {
         try {
-            // Call the Stripe API to send the invoice email
-            $invoice = $this->getClient()->invoices->sendInvoice($invoiceId);
+            $invoice = $this->getClient($stripeAccountId)->invoices->sendInvoice($invoiceId);
 
-            // Log the successful send
             $this->generic->log('info', 'Stripe invoice sent', [
                 'invoice_id' => $invoiceId,
+                'account_id' => $stripeAccountId,
             ]);
 
-            // Return the updated invoice data
             return [
                 'success' => true,
                 'data' => [
-                    'id'     => $invoice->id,      // Stripe Invoice ID
-                    'status' => $invoice->status,   // Should be 'open' or 'sent'
+                    'id'     => $invoice->id,
+                    'status' => $invoice->status,
                 ],
             ];
-
         } catch (ApiErrorException $e) {
-            // Log the API error with details
             $this->generic->log('error', 'Stripe invoice send failed', [
                 'invoice_id' => $invoiceId,
                 'error' => $e->getMessage(),
             ]);
-
-            // Return failure response
-            return [
-                'success' => false,
-                'error' => $e->getMessage(),
-            ];
+            return ['success' => false, 'error' => $e->getMessage()];
         }
     }
 
     /**
-     * Retrieve current invoice details from Stripe.
-     * Used to poll for payment status (draft → open → paid).
+     * Retrieve current invoice details from Stripe (for payment status polling).
      *
-     * @param string $invoiceId Stripe Invoice ID (in_xxxxx)
-     * @return array{success: bool, data?: array, error?: string} Result with invoice data or error
+     * @param string   $invoiceId       Stripe Invoice ID (in_xxxxx)
+     * @param int|null $stripeAccountId Which Stripe account to use
+     * @return array{success: bool, data?: array, error?: string}
      */
-    public function getInvoice(string $invoiceId): array
+    public function getInvoice(string $invoiceId, ?int $stripeAccountId = null): array
     {
         try {
-            // Call the Stripe API to retrieve the invoice
-            $invoice = $this->getClient()->invoices->retrieve($invoiceId);
+            $client = $this->getClient($stripeAccountId);
+            $invoice = $client->invoices->retrieve($invoiceId);
 
-            // Build the response data array
             $data = [
-                'id'              => $invoice->id,                  // Stripe Invoice ID
-                'status'          => $invoice->status,              // Current status
-                'hosted_url'      => $invoice->hosted_invoice_url,  // Client-facing URL
-                'amount_due'      => $invoice->amount_due,          // Amount due in cents
-                'amount_paid'     => $invoice->amount_paid,         // Amount paid in cents
-                'amount_remaining' => $invoice->amount_remaining,   // Remaining balance in cents
-                'paid'            => $invoice->paid,                // Boolean: fully paid?
-                'payment_intent'  => $invoice->payment_intent,      // Payment intent ID if paid
+                'id'               => $invoice->id,
+                'status'           => $invoice->status,
+                'hosted_url'       => $invoice->hosted_invoice_url,
+                'amount_due'       => $invoice->amount_due,
+                'amount_paid'      => $invoice->amount_paid,
+                'amount_remaining' => $invoice->amount_remaining,
+                'paid'             => $invoice->paid,
+                'payment_intent'   => $invoice->payment_intent,
             ];
 
-            // If the invoice is paid, include additional payment details
+            // If paid, get payment details
             if ($invoice->paid && $invoice->payment_intent) {
-                // Retrieve the payment intent for detailed payment info
-                $paymentIntent = $this->getClient()->paymentIntents->retrieve($invoice->payment_intent);
-
-                // Add payment details to the response
+                $paymentIntent = $client->paymentIntents->retrieve($invoice->payment_intent);
                 $data['payment_details'] = [
-                    'payment_method' => $paymentIntent->payment_method,  // Payment method ID
-                    'amount'         => $paymentIntent->amount,          // Amount in cents
-                    'currency'       => $paymentIntent->currency,        // Currency code
-                    'status'         => $paymentIntent->status,          // Payment status
-                    'created'        => date('Y-m-d H:i:s', $paymentIntent->created), // Payment timestamp
+                    'payment_method' => $paymentIntent->payment_method,
+                    'amount'         => $paymentIntent->amount,
+                    'currency'       => $paymentIntent->currency,
+                    'status'         => $paymentIntent->status,
+                    'created'        => date('Y-m-d H:i:s', $paymentIntent->created),
                 ];
             }
 
-            // Log the retrieval
             $this->generic->log('info', 'Stripe invoice retrieved', [
                 'invoice_id' => $invoiceId,
                 'status' => $invoice->status,
                 'paid' => $invoice->paid,
             ]);
 
-            // Return the invoice data
-            return [
-                'success' => true,
-                'data' => $data,
-            ];
-
+            return ['success' => true, 'data' => $data];
         } catch (ApiErrorException $e) {
-            // Log the API error with details
             $this->generic->log('error', 'Stripe invoice retrieval failed', [
                 'invoice_id' => $invoiceId,
                 'error' => $e->getMessage(),
             ]);
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
 
-            // Return failure response
+    /**
+     * Test connectivity to a specific Stripe account.
+     *
+     * @param int|null $stripeAccountId Account to test (null = default)
+     * @return array{success: bool, message: string}
+     */
+    public function testConnection(?int $stripeAccountId = null): array
+    {
+        try {
+            $this->getClient($stripeAccountId)->customers->all(['limit' => 1]);
+            return ['success' => true, 'message' => 'Connected successfully.'];
+        } catch (\Exception $e) {
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Retrieve a Stripe subscription by ID with full details.
+     * Searches across all Stripe accounts if no account ID specified.
+     *
+     * @param string   $subscriptionId  Stripe subscription ID (sub_xxx)
+     * @param int|null $stripeAccountId Specific account to check (null = search all)
+     * @return array{success: bool, data?: array, stripe_account_id?: int, error?: string}
+     */
+    public function getSubscription(string $subscriptionId, ?int $stripeAccountId = null): array
+    {
+        $accountsToSearch = [];
+
+        if ($stripeAccountId) {
+            $accountsToSearch[] = $stripeAccountId;
+        } else {
+            // Search all active accounts
+            $accountsToSearch = \App\Models\StripeAccount::active()
+                ->pluck('id')->toArray();
+            // Also try env fallback (null = default)
+            $accountsToSearch[] = null;
+        }
+
+        foreach ($accountsToSearch as $acctId) {
+            try {
+                $client = $this->getClient($acctId);
+                $sub = $client->subscriptions->retrieve($subscriptionId, [
+                    'expand' => ['customer', 'items.data.price.product', 'latest_invoice'],
+                ]);
+
+                $data = $this->parseSubscriptionData($sub);
+                $data['stripe_account_id'] = $acctId;
+
+                return ['success' => true, 'data' => $data, 'stripe_account_id' => $acctId];
+            } catch (\Exception $e) {
+                // Not found on this account, continue searching
+                continue;
+            }
+        }
+
+        return ['success' => false, 'error' => 'Subscription not found on any connected Stripe account.'];
+    }
+
+    /**
+     * List all active subscriptions from a Stripe account.
+     *
+     * @param int|null $stripeAccountId Account to query (null = default)
+     * @param int      $limit           Max results (default 100)
+     * @return array{success: bool, subscriptions?: array, error?: string}
+     */
+    public function listActiveSubscriptions(?int $stripeAccountId = null, int $limit = 100): array
+    {
+        try {
+            $client = $this->getClient($stripeAccountId);
+            $allSubs = [];
+            $params = ['status' => 'active', 'limit' => min($limit, 100), 'expand' => ['data.customer', 'data.items.data.price.product']];
+            $hasMore = true;
+
+            while ($hasMore && count($allSubs) < $limit) {
+                $result = $client->subscriptions->all($params);
+                foreach ($result->data as $sub) {
+                    $allSubs[] = $this->parseSubscriptionData($sub);
+                }
+                $hasMore = $result->has_more;
+                if ($hasMore && count($result->data) > 0) {
+                    $params['starting_after'] = end($result->data)->id;
+                }
+            }
+
+            return ['success' => true, 'subscriptions' => $allSubs];
+        } catch (\Exception $e) {
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Parse a Stripe subscription object into a flat array.
+     *
+     * @param object $sub Stripe subscription object
+     * @return array Parsed subscription data
+     */
+    protected function parseSubscriptionData(object $sub): array
+    {
+        $customer = $sub->customer;
+        $customerName = is_object($customer) ? ($customer->name ?? '') : '';
+        $customerEmail = is_object($customer) ? ($customer->email ?? '') : '';
+        $customerId = is_object($customer) ? $customer->id : ($customer ?? '');
+
+        // Extract line items description and product info
+        $descriptions = [];
+        $productNames = [];
+        $totalAmount = 0;
+        $interval = 'month';
+        $priceId = null;
+
+        if ($sub->items && $sub->items->data) {
+            foreach ($sub->items->data as $item) {
+                if ($item->price) {
+                    $totalAmount += $item->price->unit_amount * ($item->quantity ?? 1);
+                    $interval = $item->price->recurring->interval ?? 'month';
+                    $priceId = $priceId ?? $item->price->id;
+
+                    if ($item->price->product && is_object($item->price->product)) {
+                        $productNames[] = $item->price->product->name ?? '';
+                    }
+                }
+                // Description from the line item or price nickname
+                $desc = $item->description
+                    ?? ($item->price->nickname ?? '')
+                    ?: ($item->price->product->name ?? '');
+                if ($desc) $descriptions[] = $desc;
+            }
+        }
+
+        // Last payment date from latest invoice
+        $lastPayment = null;
+        if ($sub->latest_invoice && is_object($sub->latest_invoice)) {
+            if ($sub->latest_invoice->status === 'paid' && $sub->latest_invoice->status_transitions) {
+                $paidAt = $sub->latest_invoice->status_transitions->paid_at ?? null;
+                $lastPayment = $paidAt ? date('Y-m-d H:i:s', $paidAt) : null;
+            }
+        }
+
+        return [
+            'id'                    => $sub->id,
+            'status'                => $sub->status,
+            'customer_id'           => $customerId,
+            'customer_name'         => $customerName,
+            'customer_email'        => $customerEmail,
+            'product_name'          => implode(', ', array_filter($productNames)),
+            'description'           => implode(' | ', array_filter($descriptions)),
+            'amount_cents'          => $totalAmount,
+            'interval'              => $interval,
+            'price_id'              => $priceId,
+            'current_period_start'  => $sub->current_period_start ? date('Y-m-d H:i:s', $sub->current_period_start) : null,
+            'current_period_end'    => $sub->current_period_end ? date('Y-m-d H:i:s', $sub->current_period_end) : null,
+            'next_payment_at'       => $sub->current_period_end ? date('Y-m-d H:i:s', $sub->current_period_end) : null,
+            'last_payment_at'       => $lastPayment,
+            'canceled_at'           => $sub->canceled_at ? date('Y-m-d H:i:s', $sub->canceled_at) : null,
+            'created'               => $sub->created ? date('Y-m-d H:i:s', $sub->created) : null,
+        ];
+    }
+
+    /**
+     * Get detailed customer info from Stripe for display.
+     * Includes balance, default payment method, subscriptions count, etc.
+     *
+     * @param string   $customerId      Stripe customer ID
+     * @param int|null $stripeAccountId Account to query
+     * @return array{success: bool, data?: array, error?: string}
+     */
+    public function getCustomerDetails(string $customerId, ?int $stripeAccountId = null): array
+    {
+        try {
+            $client = $this->getClient($stripeAccountId);
+            $customer = $client->customers->retrieve($customerId, [
+                'expand' => ['default_source', 'subscriptions'],
+            ]);
+
+            $activeSubs = 0;
+            $totalMrr = 0;
+            if ($customer->subscriptions && $customer->subscriptions->data) {
+                foreach ($customer->subscriptions->data as $sub) {
+                    if ($sub->status === 'active') {
+                        $activeSubs++;
+                        foreach ($sub->items->data as $item) {
+                            $totalMrr += ($item->price->unit_amount ?? 0) * ($item->quantity ?? 1);
+                        }
+                    }
+                }
+            }
+
             return [
-                'success' => false,
-                'error' => $e->getMessage(),
+                'success' => true,
+                'data' => [
+                    'id'                  => $customer->id,
+                    'name'                => $customer->name ?? '',
+                    'email'               => $customer->email ?? '',
+                    'phone'               => $customer->phone ?? '',
+                    'currency'            => $customer->currency ?? 'usd',
+                    'balance_cents'       => $customer->balance ?? 0,
+                    'created'             => $customer->created ? date('M j, Y', $customer->created) : null,
+                    'delinquent'          => $customer->delinquent ?? false,
+                    'active_subscriptions' => $activeSubs,
+                    'mrr_cents'           => $totalMrr,
+                    'default_source'      => $customer->default_source ? (is_object($customer->default_source) ? ($customer->default_source->last4 ?? 'on file') : 'on file') : null,
+                    'metadata'            => (array) ($customer->metadata ?? []),
+                    'dashboard_url'       => 'https://dashboard.stripe.com/customers/' . $customer->id,
+                ],
             ];
+        } catch (\Exception $e) {
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Create a Stripe invoice with one or more line items.
+     * Returns the created invoice with hosted URL and ID.
+     *
+     * @param string   $customerId      Stripe customer ID
+     * @param array    $lineItems       Array of ['description' => ..., 'amount_cents' => ...]
+     * @param int|null $stripeAccountId Account to use
+     * @param int      $dueDays         Days until due (0 = due on receipt)
+     * @param string|null $memo         Invoice memo/note
+     * @return array{success: bool, data?: array, error?: string}
+     */
+    public function createInvoiceWithItems(
+        string $customerId,
+        array $lineItems,
+        ?int $stripeAccountId = null,
+        int $dueDays = 30,
+        ?string $memo = null,
+    ): array {
+        try {
+            $client = $this->getClient($stripeAccountId);
+            $currency = strtolower(config('hws.currency', 'usd'));
+
+            // Create the invoice shell as draft
+            $invoiceParams = [
+                'customer' => $customerId,
+                'auto_advance' => false,
+                'currency' => $currency,
+                'collection_method' => 'send_invoice',
+                'days_until_due' => $dueDays,
+            ];
+            if ($memo) $invoiceParams['description'] = $memo;
+
+            $invoice = $client->invoices->create($invoiceParams);
+
+            // Add each line item
+            foreach ($lineItems as $item) {
+                $client->invoiceItems->create([
+                    'customer'    => $customerId,
+                    'invoice'     => $invoice->id,
+                    'amount'      => $item['amount_cents'],
+                    'currency'    => $currency,
+                    'description' => $item['description'],
+                ]);
+            }
+
+            // Retrieve updated invoice to get totals
+            $invoice = $client->invoices->retrieve($invoice->id);
+
+            $this->generic->log('info', 'Invoice created via Invoicing Center', [
+                'invoice_id'  => $invoice->id,
+                'customer_id' => $customerId,
+                'account_id'  => $stripeAccountId,
+                'items'       => count($lineItems),
+                'total'       => $invoice->amount_due,
+            ]);
+
+            return [
+                'success' => true,
+                'data' => [
+                    'id'          => $invoice->id,
+                    'status'      => $invoice->status,
+                    'hosted_url'  => $invoice->hosted_invoice_url,
+                    'pdf_url'     => $invoice->invoice_pdf,
+                    'amount_due'  => $invoice->amount_due,
+                    'currency'    => $invoice->currency,
+                    'customer'    => $customerId,
+                    'created'     => date('Y-m-d H:i:s', $invoice->created),
+                    'dashboard_url' => 'https://dashboard.stripe.com/invoices/' . $invoice->id,
+                ],
+            ];
+        } catch (\Stripe\Exception\ApiErrorException $e) {
+            $this->generic->log('error', 'Invoice creation failed', [
+                'customer_id' => $customerId,
+                'error'       => $e->getMessage(),
+            ]);
+            return ['success' => false, 'error' => $e->getMessage()];
         }
     }
 }

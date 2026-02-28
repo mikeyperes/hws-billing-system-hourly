@@ -102,15 +102,40 @@
                     Accounts
                 </a>
 
-                {{-- ═══ SECTION 3: Invoice Generator ═══ --}}
-                <p class="text-xs text-gray-600 uppercase tracking-wider pt-4 pb-1 px-3">Tools</p>
+                <a href="{{ route('hosting.mapping-tool') }}"
+                   class="flex items-center px-3 py-2 rounded-lg text-sm {{ request()->routeIs('hosting.mapping*') ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white' }}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                    </svg>
+                    Subscription Mapping
+                </a>
 
-                <a href="{{ route('invoice-generator.index') }}"
-                   class="flex items-center px-3 py-2 rounded-lg text-sm {{ request()->routeIs('invoice-generator.*') ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white' }}">
+                <a href="{{ route('hosting.maintenance') }}"
+                   class="flex items-center px-3 py-2 rounded-lg text-sm {{ request()->routeIs('hosting.maintenance*') ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white' }}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    Maintenance
+                </a>
+
+                {{-- ═══ SECTION 3: Invoicing Center ═══ --}}
+                <p class="text-xs text-gray-600 uppercase tracking-wider pt-4 pb-1 px-3">Invoicing</p>
+
+                <a href="{{ route('invoicing.index') }}"
+                   class="flex items-center px-3 py-2 rounded-lg text-sm {{ request()->routeIs('invoicing.index') || request()->routeIs('invoicing.create') ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white' }}">
                     <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                     </svg>
-                    Invoice Generator
+                    Invoicing Center
+                </a>
+
+                <a href="{{ route('invoicing.templates') }}"
+                   class="flex items-center px-3 py-2 rounded-lg text-sm {{ request()->routeIs('invoicing.templates') || request()->routeIs('invoicing.template.*') ? 'bg-gray-800 text-white' : 'hover:bg-gray-800 hover:text-white' }}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+                    </svg>
+                    Item Templates
                 </a>
 
                 {{-- ═══ SHARED: Clients + System ═══ --}}
@@ -129,7 +154,7 @@
                     <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                     </svg>
-                    Email Templates
+                    Template Center
                 </a>
 
                 <a href="{{ route('lists.index') }}"
@@ -149,6 +174,11 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                     </svg>
                     Settings
+                </a>
+
+                <a href="{{ route('settings.stripe-accounts.index') }}"
+                   class="flex items-center px-3 py-2 rounded-lg text-sm pl-11 {{ request()->routeIs('settings.stripe-accounts.*') ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white' }}">
+                    Stripe Accounts
                 </a>
 
                 <a href="{{ route('info.index') }}"
