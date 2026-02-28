@@ -327,8 +327,8 @@ class InvoiceController extends Controller
                 ->with('error', 'No Stripe invoice ID associated with this invoice.');
         }
 
-        // Step 1: Finalize the draft invoice on Stripe
-        $finalizeResult = $this->stripe->finalizeInvoice($invoice->stripe_invoice_id);
+        // Step 1: Finalize the draft invoice on Stripe (using the correct Stripe account)
+        $finalizeResult = $this->stripe->finalizeInvoice($invoice->stripe_invoice_id, $invoice->stripe_account_id);
 
         // Check if finalization succeeded
         if (!$finalizeResult['success']) {
@@ -338,7 +338,7 @@ class InvoiceController extends Controller
         }
 
         // Step 2: Send the finalized invoice via Stripe
-        $sendResult = $this->stripe->sendInvoice($invoice->stripe_invoice_id);
+        $sendResult = $this->stripe->sendInvoice($invoice->stripe_invoice_id, $invoice->stripe_account_id);
 
         // Check if sending succeeded
         if (!$sendResult['success']) {

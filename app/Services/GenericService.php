@@ -242,4 +242,49 @@ class GenericService
         // Return the complete HTML table
         return $html;
     }
+
+    /**
+     * Get status of connected services (Stripe accounts, Brevo/SMTP).
+     * Used by Dashboard to show integration health at a glance.
+     *
+     * @return array{stripe: array, brevo: array}
+     */
+    public function getServiceStatus(): array
+    {
+        // Stripe accounts status
+        $stripeAccounts = \App\Models\StripeAccount::orderBy('name')->get()->map(function ($acct) {
+            return [
+                'id'         => $acct->id,
+                'name'       => $acct->name,
+                'is_active'  => $acct->is_active,
+                'is_default' => $acct->is_default,
+                'masked_key' => $acct->masked_key,
+            ];
+        })->toArray();
+
+        $hasActiveStripe = \App\Models\StripeAccount::where('is_active', true)->exists();
+        $hasEnvStripe = !empty(config('hws.stripe.secret_key'));
+
+        // Brevo/SMTP config status
+        $smtpHost = config('mail.mailers.smtp.host', '');
+        $smtpPort = config('mail.mailers.smtp.port', '');
+        $smtpUser = config('mail.mailers.smtp.username', '');
+        $fromAddr = config('mail.from.address', '');
+
+        return [
+            'stripe' => [
+                'accounts'    => $stripeAccounts,
+                'has_active'  => $hasActiveStripe,
+                'has_env_key' => $hasEnvStripe,
+                'configured'  => $hasActiveStripe || $hasEnvStripe,
+            ],
+            'brevo' => [
+                'host'       => $smtpHost,
+                'port'       => $smtpPort,
+                'username'   => $smtpUser ? substr($smtpUser, 0, 4) . '...' : '',
+                'from'       => $fromAddr,
+                'configured' => !empty($smtpHost) && !empty($smtpUser) && !empty($fromAddr),
+            ],
+        ];
+    }
 }

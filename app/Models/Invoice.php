@@ -37,6 +37,7 @@ class Invoice extends Model
     protected $fillable = [
         'stripe_invoice_id',       // Stripe Invoice ID for API lookups
         'client_id',               // FK to clients table
+        'stripe_account_id',       // FK to stripe_accounts — which account created this invoice
         'total_minutes',           // Sum of all line item minutes
         'total_amount',            // Calculated dollar amount
         'status',                  // draft, sent, paid, void
@@ -64,8 +65,17 @@ class Invoice extends Model
      */
     public function client(): BelongsTo
     {
-        // Each invoice is for exactly one client
         return $this->belongsTo(Client::class);
+    }
+
+    /**
+     * Get the Stripe account this invoice was created under.
+     *
+     * @return BelongsTo
+     */
+    public function stripeAccount(): BelongsTo
+    {
+        return $this->belongsTo(StripeAccount::class);
     }
 
     /**
@@ -75,7 +85,6 @@ class Invoice extends Model
      */
     public function lineItems(): HasMany
     {
-        // An invoice contains many line items from employee sheets
         return $this->hasMany(InvoiceLineItem::class);
     }
 

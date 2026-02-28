@@ -31,11 +31,12 @@ class Employee extends Model
      * @var array<string>
      */
     protected $fillable = [
-        'name',                      // Employee display name
-        'google_sheet_id',           // Google Sheet ID (extracted from URL)
-        'scan_start_primary_key',    // Where to start scanning on next billing run
-        'last_billing_primary_key',  // Where the last billing run ended
-        'is_active',                 // Whether employee is included in billing scans
+        'name',                              // Employee display name
+        'google_sheet_id',                   // Google Sheet ID (extracted from URL) — nullable
+        'scan_start_primary_key',            // Where to start scanning on next billing run
+        'previous_scan_start_primary_key',   // Where cursor was before last change
+        'last_billing_primary_key',          // Where the last billing run ended
+        'is_active',                         // Whether employee is included in billing scans
     ];
 
     /**
@@ -44,9 +45,10 @@ class Employee extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'scan_start_primary_key'   => 'integer',  // Always an integer
-        'last_billing_primary_key' => 'integer',   // Always an integer
-        'is_active'                => 'boolean',   // Cast to true/false
+        'scan_start_primary_key'          => 'integer',
+        'previous_scan_start_primary_key' => 'integer',
+        'last_billing_primary_key'        => 'integer',
+        'is_active'                       => 'boolean',
     ];
 
     /**

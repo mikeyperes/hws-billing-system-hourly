@@ -164,6 +164,38 @@ class GoogleSheetsService
     }
 
     /**
+     * Test if the service account has write access to a Google Sheet.
+     * Reads cell A1 and writes the same value back (no actual change).
+     *
+     * @param string $sheetId The Google Sheet ID to test
+     * @return array{success: bool, message: string}
+     */
+    public function testWriteAccess(string $sheetId): array
+    {
+        try {
+            $service = $this->getService();
+
+            // Read current value of A1
+            $response = $service->spreadsheets_values->get($sheetId, 'A1');
+            $currentValue = $response->getValues()[0][0] ?? '';
+
+            // Write the same value back (tests write permission without changing data)
+            $body = new \Google\Service\Sheets\ValueRange(['values' => [[$currentValue]]]);
+            $service->spreadsheets_values->update($sheetId, 'A1', $body, [
+                'valueInputOption' => 'RAW',
+            ]);
+
+            return ['success' => true, 'message' => 'Service account has write access to the sheet.'];
+        } catch (\Exception $e) {
+            $msg = $e->getMessage();
+            if (str_contains($msg, 'not have permission') || str_contains($msg, 'PERMISSION_DENIED')) {
+                return ['success' => false, 'message' => 'Sheet is READ-ONLY. Share with Editor permission for billing write-back.'];
+            }
+            return ['success' => false, 'message' => 'Write test failed: ' . $msg];
+        }
+    }
+
+    /**
      * Read all rows from an employee's Google Sheet starting after a given primary key.
      * Returns rows as associative arrays using the column headers as keys.
      *

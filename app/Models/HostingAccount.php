@@ -19,12 +19,17 @@ class HostingAccount extends Model
         'client_id',         // FK to clients (nullable)
         'username',          // cPanel username
         'domain',            // Primary domain
+        'owner',             // Reseller owner (from WHM)
+        'email',             // Contact email on cPanel account
         'package',           // Hosting package name
-        'status',            // active, suspended, terminated
+        'status',            // active, suspended, removed
+        'suspend_reason',    // WHM suspension reason
         'ip_address',        // Assigned IP
         'disk_used_mb',      // Disk usage
         'disk_limit_mb',     // Disk quota
         'bandwidth_used_mb', // Bandwidth usage
+        'shell_access',      // Shell type
+        'theme',             // cPanel theme
         'server_created_at', // Creation date on server
         'notes',             // Admin notes
     ];

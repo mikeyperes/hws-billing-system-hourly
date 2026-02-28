@@ -58,6 +58,9 @@ class DashboardController extends Controller
             'active_clients'   => Client::active()->count(),
         ];
 
+        // Service status (Stripe accounts, Brevo/SMTP)
+        $serviceStatus = $this->generic->getServiceStatus();
+
         return view('dashboard.index', [
             'employees'        => $employees,
             'invoiceCounts'    => $invoiceStats['counts'],
@@ -66,6 +69,7 @@ class DashboardController extends Controller
             'recentScans'      => $recentScans,
             'systemHealth'     => $systemHealth,
             'cloudStats'       => $cloudStats,
+            'serviceStatus'    => $serviceStatus,
         ]);
     }
 }

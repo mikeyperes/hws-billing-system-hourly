@@ -9,30 +9,16 @@ use Illuminate\Http\Request;
 
 /**
  * EmployeeController — handles employee CRUD with separate Google Sheet validation.
- * Employees are saved without sheet validation.
- * A separate "Validate" action checks sheet access, headers, and permissions.
+ * Employees can be saved without a Google Sheet ID (added later).
+ * A separate "Validate" action runs a detailed checklist on the sheet.
  */
 class EmployeeController extends Controller
 {
-    /**
-     * @var GoogleSheetsService Google Sheets API service for validation
-     */
     protected GoogleSheetsService $sheetsService;
-
-    /**
-     * @var GenericService Shared utility service
-     */
     protected GenericService $generic;
 
-    /**
-     * Constructor — inject required services.
-     *
-     * @param GoogleSheetsService $sheetsService Google Sheets API service
-     * @param GenericService      $generic       Shared utility service
-     */
     public function __construct(GoogleSheetsService $sheetsService, GenericService $generic)
     {
-        // Store service references
         $this->sheetsService = $sheetsService;
         $this->generic = $generic;
     }
@@ -44,13 +30,8 @@ class EmployeeController extends Controller
      */
     public function index()
     {
-        // Get all employees ordered by name
         $employees = Employee::orderBy('name')->paginate(config('hws.per_page'));
-
-        // Render the employee list view
-        return view('employees.index', [
-            'employees' => $employees,  // Paginated employee collection
-        ]);
+        return view('employees.index', ['employees' => $employees]);
     }
 
     /**
@@ -60,40 +41,43 @@ class EmployeeController extends Controller
      */
     public function create()
     {
-        // Render the create form
         return view('employees.create');
     }
 
     /**
      * Store a new employee record.
-     * Saves immediately without Google Sheet validation.
-     * Validation is done separately via the Validate button on the edit page.
+     * Google Sheet ID is optional — can be added later.
      *
      * @param Request $request
      * @return \Illuminate\Http\RedirectResponse
      */
     public function store(Request $request)
     {
-        // Validate the incoming form data
         $validated = $request->validate([
-            'name'            => 'required|string|max:255',  // Employee name
-            'google_sheet_id' => 'required|string|max:500',  // Sheet URL or ID
+            'name'            => 'required|string|max:255',
+            'google_sheet_id' => 'nullable|string|max:500',
         ]);
 
-        // Extract the sheet ID from the URL (if a full URL was provided)
-        $sheetId = $this->generic->extractSheetId($validated['google_sheet_id']);
+        // Extract sheet ID from URL if provided
+        $sheetId = null;
+        if (!empty($validated['google_sheet_id'])) {
+            $sheetId = $this->generic->extractSheetId($validated['google_sheet_id']);
+        }
 
-        // Create the employee record — no sheet validation, just save
         $employee = Employee::create([
-            'name'            => $validated['name'],  // Employee name
-            'google_sheet_id' => $sheetId,            // Extracted sheet ID
-            'is_active'       => true,                // Active by default
+            'name'            => $validated['name'],
+            'google_sheet_id' => $sheetId,
+            'is_active'       => true,
         ]);
 
-        // Redirect to the edit page so they can validate the sheet
-        return redirect()
-            ->route('employees.edit', $employee)
-            ->with('success', 'Employee "' . $employee->name . '" created. Use the Validate Sheet button to check access.');
+        $message = 'Employee "' . $employee->name . '" created.';
+        if ($sheetId) {
+            $message .= ' Use the Validate Sheet button to check access.';
+        } else {
+            $message .= ' Add a Google Sheet ID when ready.';
+        }
+
+        return redirect()->route('employees.edit', $employee)->with('success', $message);
     }
 
     /**
@@ -104,150 +88,247 @@ class EmployeeController extends Controller
      */
     public function edit(Employee $employee)
     {
-        // Get recent scan logs for this employee (last 5)
         $recentScans = $employee->scanLogs()
             ->orderByDesc('created_at')
             ->limit(5)
             ->get();
 
-        // Render the edit form
         return view('employees.edit', [
-            'employee'    => $employee,    // The employee being edited
-            'recentScans' => $recentScans, // Recent scan history
+            'employee'    => $employee,
+            'recentScans' => $recentScans,
         ]);
     }
 
     /**
      * Update an existing employee record.
-     * Saves immediately without Google Sheet validation.
+     * Tracks previous scan cursor value before overwriting.
      *
      * @param Request  $request
-     * @param Employee $employee Route model binding
+     * @param Employee $employee
      * @return \Illuminate\Http\RedirectResponse
      */
     public function update(Request $request, Employee $employee)
     {
-        // Validate the incoming form data
         $validated = $request->validate([
-            'name'                   => 'required|string|max:255',     // Employee name
-            'google_sheet_id'        => 'required|string|max:500',     // Sheet URL or ID
-            'scan_start_primary_key' => 'nullable|integer|min:0',      // Manual cursor override
-            'is_active'              => 'boolean',                      // Active toggle
+            'name'                   => 'required|string|max:255',
+            'google_sheet_id'        => 'nullable|string|max:500',
+            'scan_start_primary_key' => 'nullable|integer|min:0',
+            'is_active'              => 'boolean',
         ]);
 
-        // Extract the sheet ID from the URL
-        $sheetId = $this->generic->extractSheetId($validated['google_sheet_id']);
+        // Extract sheet ID from URL if provided
+        $sheetId = null;
+        if (!empty($validated['google_sheet_id'])) {
+            $sheetId = $this->generic->extractSheetId($validated['google_sheet_id']);
+        }
 
-        // Update the employee record — no sheet validation, just save
+        // Track previous cursor before updating
+        $newCursor = $validated['scan_start_primary_key'] ?? $employee->scan_start_primary_key;
+        $previousCursor = $employee->scan_start_primary_key;
+
         $employee->update([
-            'name'                   => $validated['name'],                             // Name
-            'google_sheet_id'        => $sheetId,                                       // Sheet ID
-            'scan_start_primary_key' => $validated['scan_start_primary_key'] ?? $employee->scan_start_primary_key, // Cursor
-            'is_active'              => $request->has('is_active'),                      // Active toggle
+            'name'                            => $validated['name'],
+            'google_sheet_id'                 => $sheetId,
+            'scan_start_primary_key'          => $newCursor,
+            'previous_scan_start_primary_key' => $previousCursor,
+            'is_active'                       => $request->has('is_active'),
         ]);
 
-        // Redirect back to the edit page with success message
-        return redirect()
-            ->route('employees.edit', $employee)
-            ->with('success', 'Employee updated successfully.');
+        return redirect()->route('employees.edit', $employee)->with('success', 'Employee updated successfully.');
     }
 
     /**
-     * Validate an employee's Google Sheet access.
-     * Runs a series of checks and returns results to the edit page.
+     * Run detailed validation on an employee's Google Sheet.
+     * Returns a comprehensive checklist with pass/fail results.
      *
      * Checks performed:
-     * 1. Google credentials file exists on disk
-     * 2. Service account can access the sheet (read permission)
-     * 3. Sheet has all required column headers in Row 1
-     * 4. Reports the service account email for sharing reference
+     * 1. Google credentials file exists
+     * 2. Sheet is accessible (readable) by service account
+     * 3. Sheet is writable by service account
+     * 4. Each required column header checked individually
+     * 5. Detected starting point (scan cursor)
+     * 6. Row preview from starting point to end
+     * 7. Each row checked for readability (non-empty)
+     * 8. Flag any unreadable rows that would be skipped
      *
-     * @param Employee $employee Route model binding
+     * @param Employee $employee
      * @return \Illuminate\Http\RedirectResponse
      */
     public function validateSheet(Employee $employee)
     {
-        // Array to collect validation results — each item has: pass (bool), check (string), message (string)
         $results = [];
+
+        // ── Pre-check: Sheet ID configured ──
+        if (empty($employee->google_sheet_id)) {
+            $results[] = [
+                'pass'    => false,
+                'check'   => 'Google Sheet ID',
+                'message' => 'No Google Sheet ID configured for this employee. Add one first.',
+            ];
+            return redirect()->route('employees.edit', $employee)
+                ->with('validation_results', $results);
+        }
 
         // ── Check 1: Google credentials file exists ──
         $credPath = config('hws.google.credentials_path');
         if (file_exists($credPath)) {
-            // Credentials file found
             $results[] = [
                 'pass'    => true,
                 'check'   => 'Google Credentials File',
                 'message' => 'Found at ' . $credPath,
             ];
         } else {
-            // Credentials file missing — cannot proceed
             $results[] = [
                 'pass'    => false,
                 'check'   => 'Google Credentials File',
                 'message' => 'NOT FOUND at ' . $credPath . '. Upload your Google service account JSON key file.',
             ];
-            // Return early — nothing else will work without credentials
-            return redirect()
-                ->route('employees.edit', $employee)
+            return redirect()->route('employees.edit', $employee)
                 ->with('validation_results', $results);
         }
 
-        // ── Check 2: Service account can access the sheet + headers are correct ──
+        // ── Check 2: Sheet is accessible (read test) ──
         $validation = $this->sheetsService->validateSheetAccess($employee->google_sheet_id);
         if ($validation['success']) {
-            // Sheet is accessible and headers are correct
             $results[] = [
                 'pass'    => true,
-                'check'   => 'Sheet Access',
+                'check'   => 'Sheet Readable',
                 'message' => 'Service account can read the sheet.',
             ];
-            $results[] = [
-                'pass'    => true,
-                'check'   => 'Column Headers',
-                'message' => 'All required headers found: ' . implode(', ', $validation['headers'] ?? []),
-            ];
         } else {
-            // Access or header check failed — report the specific error
             $results[] = [
                 'pass'    => false,
-                'check'   => 'Sheet Access / Headers',
+                'check'   => 'Sheet Readable',
                 'message' => $validation['message'],
+            ];
+            return redirect()->route('employees.edit', $employee)
+                ->with('validation_results', $results);
+        }
+
+        // ── Check 3: Sheet is writable (attempt write test) ──
+        $writeTestResult = $this->sheetsService->testWriteAccess($employee->google_sheet_id);
+        $results[] = [
+            'pass'    => $writeTestResult['success'],
+            'check'   => 'Sheet Writable',
+            'message' => $writeTestResult['message'],
+        ];
+
+        // ── Check 4: Each required column checked individually ──
+        $actualHeaders = $validation['headers'] ?? [];
+        $expectedColumns = config('hws.sheet_columns');
+        foreach ($expectedColumns as $key => $columnName) {
+            $found = in_array($columnName, $actualHeaders);
+            $results[] = [
+                'pass'    => $found,
+                'check'   => 'Column: ' . $columnName,
+                'message' => $found
+                    ? 'Found in header row (position: ' . (array_search($columnName, $actualHeaders) + 1) . ')'
+                    : 'MISSING — required column "' . $columnName . '" not found in header row.',
             ];
         }
 
-        // ── Check 3: Try to read data rows ──
+        // ── Check 5: Detected starting point ──
+        $cursor = $employee->scan_start_primary_key;
+        $results[] = [
+            'pass'    => true,
+            'check'   => 'Scan Cursor (Starting Point)',
+            'message' => 'Current cursor: ' . $cursor . '. Will read rows with primary_key > ' . $cursor . '.',
+        ];
+
+        // ── Check 6 & 7: Read rows from cursor, validate each ──
         try {
-            // Read all rows from the sheet starting from PK 0 (all rows)
-            $readResult = $this->sheetsService->readRows($employee->google_sheet_id, 0);
+            $readResult = $this->sheetsService->readRows($employee->google_sheet_id, $cursor);
             if ($readResult['success']) {
-                $rowCount = count($readResult['rows'] ?? []);
-                if ($rowCount > 0) {
-                    $results[] = [
-                        'pass'    => true,
-                        'check'   => 'Data Rows',
-                        'message' => $rowCount . ' data rows found in sheet.',
-                    ];
-                } else {
+                $rows = $readResult['rows'] ?? [];
+                $rowCount = count($rows);
+
+                $results[] = [
+                    'pass'    => $rowCount > 0,
+                    'check'   => 'Data Rows From Cursor',
+                    'message' => $rowCount > 0
+                        ? $rowCount . ' rows found after cursor position ' . $cursor . '.'
+                        : 'No data rows found after cursor position ' . $cursor . '. Sheet may be fully scanned.',
+                ];
+
+                // Check each row for readability
+                $readableCount = 0;
+                $unreadableRows = [];
+                $rowPreview = [];
+                $colPrimaryKey = config('hws.sheet_columns.primary_key');
+                $colClient = config('hws.sheet_columns.client');
+                $colBilledStatus = config('hws.sheet_columns.billed_status');
+                $colTime = config('hws.sheet_columns.time');
+                $colDescription = config('hws.sheet_columns.description');
+                $pendingStatus = config('hws.billed_status.pending');
+
+                foreach ($rows as $row) {
+                    $pk = $row[$colPrimaryKey] ?? '';
+                    $clientName = trim($row[$colClient] ?? '');
+                    $status = trim($row[$colBilledStatus] ?? '');
+                    $time = trim($row[$colTime] ?? '');
+                    $desc = trim($row[$colDescription] ?? '');
+                    $sheetRow = $row['_sheet_row_number'] ?? '?';
+
+                    // A row is readable if it has a primary key and at least some content
+                    $hasContent = !empty($pk) && (!empty($clientName) || !empty($desc) || !empty($time));
+
+                    if ($hasContent) {
+                        $readableCount++;
+                    } else {
+                        $unreadableRows[] = 'Row ' . $sheetRow . ' (PK: ' . ($pk ?: 'empty') . ')';
+                    }
+
+                    // Build preview (first 20 rows)
+                    if (count($rowPreview) < 20) {
+                        $isPending = strtolower($status) === $pendingStatus;
+                        $rowPreview[] = [
+                            'sheet_row'   => $sheetRow,
+                            'primary_key' => $pk,
+                            'client'      => $clientName ?: '(empty)',
+                            'time'        => $time ?: '(empty)',
+                            'status'      => $status ?: '(empty)',
+                            'description' => mb_substr($desc, 0, 50) . (mb_strlen($desc) > 50 ? '...' : ''),
+                            'is_pending'  => $isPending,
+                            'readable'    => $hasContent,
+                        ];
+                    }
+                }
+
+                // Readable rows result
+                $results[] = [
+                    'pass'    => $readableCount === $rowCount || $rowCount === 0,
+                    'check'   => 'Row Readability',
+                    'message' => $readableCount . '/' . $rowCount . ' rows are readable.'
+                        . (count($unreadableRows) > 0
+                            ? ' Unreadable: ' . implode(', ', array_slice($unreadableRows, 0, 10))
+                            . (count($unreadableRows) > 10 ? ' (and ' . (count($unreadableRows) - 10) . ' more)' : '')
+                            : ''),
+                ];
+
+                // Unreadable rows warning
+                if (count($unreadableRows) > 0) {
                     $results[] = [
                         'pass'    => false,
-                        'check'   => 'Data Rows',
-                        'message' => 'No data rows found — sheet is empty (besides header row).',
+                        'check'   => 'Unreadable Row Warning',
+                        'message' => count($unreadableRows) . ' row(s) have no readable content. These could cause billable items to be skipped during scan. Fix them in the sheet.',
                     ];
                 }
+
             } else {
                 $results[] = [
                     'pass'    => false,
                     'check'   => 'Data Rows',
                     'message' => 'Could not read rows: ' . ($readResult['error'] ?? 'Unknown error'),
                 ];
+                $rowPreview = [];
             }
         } catch (\Exception $e) {
-            // Error reading rows — report it
             $results[] = [
                 'pass'    => false,
                 'check'   => 'Data Rows',
                 'message' => 'Error reading rows: ' . $e->getMessage(),
             ];
+            $rowPreview = [];
         }
 
         // ── Info: Service account email ──
@@ -265,9 +346,9 @@ class EmployeeController extends Controller
             'message' => 'https://docs.google.com/spreadsheets/d/' . $employee->google_sheet_id,
         ];
 
-        // Redirect back to edit page with all validation results
-        return redirect()
-            ->route('employees.edit', $employee)
-            ->with('validation_results', $results);
+        return redirect()->route('employees.edit', $employee)
+            ->with('validation_results', $results)
+            ->with('row_preview', $rowPreview ?? []);
     }
+
 }

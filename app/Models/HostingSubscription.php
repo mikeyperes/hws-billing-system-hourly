@@ -5,57 +5,68 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * HostingSubscription — links a hosting account to a Stripe subscription.
+ * HostingSubscription -- links a hosting account to a Stripe subscription.
  * Each hosting account can have multiple subscriptions for different services
  * (e.g. hosting, maintenance, domain renewal, SSL, email hosting).
  */
 class HostingSubscription extends Model
 {
-    /**
-     * Mass-assignable attributes.
-     */
     protected $fillable = [
-        'hosting_account_id',     // FK to hosting_accounts
-        'type',                   // Subscription type label (hosting, maintenance, domain)
-        'stripe_subscription_id', // Stripe sub_xxx ID
-        'stripe_customer_id',     // Stripe cus_xxx ID
-        'stripe_price_id',        // Stripe price_xxx ID
-        'status',                 // active, past_due, canceled, etc.
-        'amount_cents',           // Recurring amount in cents
-        'interval',               // month, year, week
-        'current_period_start',   // Period start from Stripe
-        'current_period_end',     // Period end from Stripe
-        'canceled_at',            // Cancellation date
-        'notes',                  // Admin notes
+        'hosting_account_id',
+        'stripe_account_id',
+        'type',
+        'stripe_subscription_id',
+        'stripe_customer_id',
+        'stripe_customer_name',
+        'stripe_customer_email',
+        'stripe_price_id',
+        'stripe_product_name',
+        'stripe_description',
+        'status',
+        'amount_cents',
+        'interval',
+        'current_period_start',
+        'current_period_end',
+        'last_payment_at',
+        'next_payment_at',
+        'canceled_at',
+        'notes',
     ];
 
-    /**
-     * Attribute casting.
-     */
     protected $casts = [
         'amount_cents'         => 'integer',
         'current_period_start' => 'datetime',
         'current_period_end'   => 'datetime',
+        'last_payment_at'      => 'datetime',
+        'next_payment_at'      => 'datetime',
         'canceled_at'          => 'datetime',
     ];
 
-    /**
-     * Relationship: This subscription belongs to a hosting account.
-     *
-     * @return \Illuminate\Database\Eloquent\Relations\BelongsTo
-     */
     public function hostingAccount()
     {
         return $this->belongsTo(HostingAccount::class);
     }
 
+    public function stripeAccount()
+    {
+        return $this->belongsTo(StripeAccount::class);
+    }
+
     /**
-     * Get the formatted amount (dollars).
-     *
-     * @return string Formatted dollar amount (e.g. "$29.99")
+     * Formatted dollar amount (e.g. "$29.99").
      */
     public function getFormattedAmountAttribute(): string
     {
         return '$' . number_format($this->amount_cents / 100, 2);
+    }
+
+    /**
+     * Stripe dashboard URL for this subscription.
+     */
+    public function getStripeDashboardUrlAttribute(): ?string
+    {
+        if (!$this->stripe_subscription_id) return null;
+        $mode = str_contains($this->stripe_subscription_id, 'test') ? 'test/' : '';
+        return "https://dashboard.stripe.com/{$mode}subscriptions/{$this->stripe_subscription_id}";
     }
 }
